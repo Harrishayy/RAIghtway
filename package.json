@@ -1,0 +1,13 @@
+{
+  "name": "raightway",
+  "private": true,
+  "packageManager": "pnpm@10.26.1",
+  "scripts": {
+    "dev": "pnpm --dir frontend dev:live",
+    "dev:mock": "pnpm --dir frontend dev:mock",
+    "check": "pnpm --dir frontend check",
+    "backend:status": "pnpm --dir frontend backend:status",
+    "backend:restart": "pnpm --dir frontend backend:restart",
+    "backend:logs": "pnpm --dir frontend backend:logs"
+  }
+}

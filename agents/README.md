@@ -1,5 +1,7 @@
 # Agent work split
 
+> Build-day plan. Where it disagrees with the code, the code and `agents/CLAUDE.md` win; for example, the "no tests" rule below is superseded.
+
 `architecture.md` broken into 8 agent tasks that can run in parallel. Each agent has its own file in this folder. Read this page first: it sets out the shared contracts that let agents build against each other before the other parts exist.
 
 | # | Agent | Owns | Critical path? |

@@ -8,9 +8,13 @@ The Raightway operator console. pnpm workspace: `apps/web` (Next.js 16, React 19
 pnpm install
 pnpm dev                 # :3000 against the backend (RAIGHTWAY_API_URL in apps/web/.env.local)
 pnpm dev:mock            # :3000 on built-in sample data (no backend needed)
+pnpm dev:live            # VM backend + SSH tunnel (:8001) + next dev, with a reconnect watchdog
+pnpm backend:status | backend:restart | backend:logs     # the uvicorn on the VM (tooling/dev-live.mjs)
 pnpm check               # typecheck + lint + test, all packages; must pass before you finish
 pnpm --filter @raightway/core test       # core unit tests only
 ```
+
+From the repo root, `pnpm dev` is `dev:live` and `pnpm dev:mock` / `pnpm check` forward here. Backend notes are in `backend/CLAUDE.md`.
 
 Real backend is the default; sample data is opt-in. Never draw invented footage on a real backend (Frame `placeholder="blank"`). To configure the backend, see "Connect a backend" in `README.md`. In short: `apps/web/.env.local` with `NEXT_PUBLIC_DATA_SOURCE=http` and `RAIGHTWAY_API_URL=…`, then restart dev.
 
@@ -35,10 +39,29 @@ Next 16 has breaking changes from older versions. `apps/web/AGENTS.md` (written 
 app/(desk)/<route>/page.tsx   thin, renders one feature
 features/<screen>/            screen logic; never import another feature (shared: features/map, features/issues/IssueCard)
 domain/                       hooks + pure helpers, no JSX except client.tsx
-layout/                       Desk (panes), TopNav, BackendStatus
+layout/                       Desk (panes), TopNav, BackendStatus (built but not mounted)
 ui/                           presentational, no data fetching
 styles/                       tokens.css → components.css → app.css
 ```
+
+## Screens and what feeds them
+
+| Screen (route) | Feature files | Client calls (backend endpoint) |
+|---|---|---|
+| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `searchTopic` (VSS, only when `capabilities.topicSearch`; off on the FastAPI backend) |
+| Issues | `features/issues/IssuesView` + `IssueCard` | `listIssues` (`/api/issues`), `similar` |
+| Report | `features/report/ReportView` | `getReport` / `regenerateReport` (`/api/report`) |
+| Dispatch | `features/dispatch/DispatchView`, `RoadsPanel` + `features/map` | `dispatch` (`POST /api/dispatch`), `hazards` (`/api/hazards`), `directions` (`POST /api/directions`) |
+| Top bar | `layout/TopNav` | tabs and the category filter. The Look picker and the API status button are hidden (see below) |
+
+## Show the sponsor tech; never fake it
+
+The demo is judged by VAST, NVIDIA and W&B people, and every backend integration has a silent fallback. The console says which path answered:
+
+- Dispatch prints `cuOpt` or `Fallback routing`, the solve time and `street times` when the matrix came from roads (`Plan.solver`, `solve_ms`, `matrix_source`).
+- The issue card's "Similar issues" label says `VastDB vector search` or `local index` (`Similar.search`), and each row shows its embedding distance.
+
+Keep these signals when you redesign a screen. Never label a fallback as the sponsor service, and never draw invented data on a real backend.
 
 ## Rules
 
@@ -46,7 +69,8 @@ styles/                       tokens.css → components.css → app.css
   - Use CSS variables from `styles/tokens.css`. ESLint bans hex literals everywhere except `ui/Footage/scene.ts`, which draws a photographic placeholder.
   - Category colour is `[data-cat=…]` → `--cc`; severity is `[data-sev=…]` → `--sv`.
 - **Three looks (`survey`, `night`, `paint`) share every component.**
-  - A component must look right in all three. Check by switching "Look" in the top bar.
+  - **The console ships in `survey` only.** The Look picker and the API status button (`BackendStatus`) were removed from `TopNav`, and `state/ui.ts` ignores any stored look. The other looks stay in CSS; preview one with `NEXT_PUBLIC_DEFAULT_DIRECTION=night` (restart dev).
+  - New components should still look right in all three.
   - Direction-specific tweaks go in CSS as `[data-dir="night"] .x { … }`, never in TSX.
 - **Panes must work at any width from 200 px**, because users drag and swap them.
   - Each `.pane` and `.card` is a CSS container. Adapt with `@container (max-width: …)` rules in CSS, or `useSize()` (`lib/useSize.ts`) when you need to measure, as the timeline ruler and the map do.
@@ -77,9 +101,9 @@ styles/                       tokens.css → components.css → app.css
 ## Verifying UI changes
 
 1. `pnpm check`.
-2. `pnpm dev`, then click through Review → Issues → Report → Dispatch in each look.
+2. `pnpm dev`, then click through Review → Issues → Report → Dispatch.
 3. On Review, drag the pane borders to their extremes and swap panes. Nothing should overlap or spill out.
-4. Upload any file to see the live pipeline. Plan routes on Dispatch.
+4. Plan routes on Dispatch. (The upload button is removed from the UI; `features/upload/UploadButton.tsx` and `client.upload` remain if it comes back.)
 
 ## Gotchas
 

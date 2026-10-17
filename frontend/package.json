@@ -8,6 +8,10 @@
   "scripts": {
     "dev": "pnpm --filter @raightway/web dev",
     "dev:mock": "NEXT_PUBLIC_DATA_SOURCE=mock pnpm --filter @raightway/web dev",
+    "dev:live": "node tooling/dev-live.mjs",
+    "backend:status": "node tooling/dev-live.mjs status",
+    "backend:restart": "node tooling/dev-live.mjs restart",
+    "backend:logs": "node tooling/dev-live.mjs logs",
     "build": "pnpm --filter @raightway/web build",
     "start": "pnpm --filter @raightway/web start",
     "typecheck": "pnpm -r typecheck",
