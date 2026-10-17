@@ -47,7 +47,7 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
       </div>
       <PinToggle issue={issue} />
       <div><h4>{issueLabel(issue)}</h4>{issue.name?.trim() ? <p className="issue-desc">{issue.description}</p> : null}<p className="where">{issue.place ?? (issue.lat != null && issue.lon != null ? fmtCoord(issue.lat, issue.lon) : 'No location')}</p></div>
-      {!frame && !issue.provisional && client.frameUrl(issue) ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="btn btn-ghost btn-sm issue-photo"><Icon name="zoom" />Full-size photo</PhotoButton> : null}
+      {!frame && !issue.provisional && client.frameUrl(issue) ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="issue-photo"><img src={client.frameUrl(issue)!} alt="" loading="lazy" /></PhotoButton> : null}
       <Grade issue={issue} />
       <dl className="kv">
         <dt>Seen</dt><dd>{issue.sightings}× · first in {drive(issue.video_id)} @ {fmtTimecode(issue.t)}</dd>

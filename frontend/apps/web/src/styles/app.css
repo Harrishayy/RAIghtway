@@ -572,7 +572,7 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 /* a cover over a Frame (IssueCard) */
 .photo-wrap{position:relative;min-width:0}
 .photo-wrap>.photo-cover{position:absolute;inset:0;z-index:4;display:block;border-radius:0}
-.photo-wrap>.photo-cover .photo-hint{right:8px;bottom:8px;width:26px;height:26px}
+.photo-wrap>.photo-cover .photo-hint{right:8px;bottom:8px;width:26px;height:26px;opacity:.92}
 .photo-wrap>.photo-cover .photo-hint .ic{width:15px;height:15px}
 /* over a thumbnail inside a row button (Similar issues, the report's worst findings): a sibling, never nested */
 .similar li,.sec-top li{position:relative}
@@ -583,7 +583,10 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 .sec-top .thumb-cover{left:9px}
 @container (max-width:300px){.similar .thumb-cover{display:none}}
 @container (max-width:360px){.sec-top .thumb-cover,.pri-tbl .photo-btn{display:none}}
-.issue-photo{justify-self:start;display:inline-flex;align-items:center;gap:6px}
+.issue-photo{display:block;width:100%;overflow:hidden;border-radius:var(--r);border:var(--bw) solid var(--line);background:var(--surface-2)}
+.issue-photo img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.issue-photo .photo-hint{right:8px;bottom:8px;width:26px;height:26px;opacity:.92}
+.issue-photo .photo-hint .ic{width:15px;height:15px}
 
 .lightbox{--lb-scrim:color-mix(in oklab,var(--ink) 84%,transparent);--lb-stage:color-mix(in oklab,var(--ink) 94%,var(--bg));position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));background:var(--lb-scrim);animation:fadein .16s var(--out,ease) both}
 [data-dir="night"] .lightbox{--lb-scrim:color-mix(in oklab,var(--bg) 88%,transparent);--lb-stage:color-mix(in oklab,var(--bg) 70%,var(--surface))}
@@ -608,7 +611,6 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 .lightbox-size{position:absolute;left:8px;bottom:8px;padding:2px 6px;border-radius:var(--r);background:var(--surface);color:var(--ink-2);pointer-events:none}
 @media (max-width:520px){.lightbox{padding:0}.lightbox-panel{height:100dvh;border-radius:0;border:0}.lightbox-t h2{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}}
 @media (prefers-reduced-motion:reduce){.lightbox,.lightbox-img,.photo-hint{animation:none;transition:none}.lightbox-spin{animation:none;border-right-color:currentColor;opacity:.6}}
-.issue-photo .photo-hint{display:none}
 
 /* ---- Planning zones (features/map) ---- */
 .m-zone{fill:var(--sev-3);fill-opacity:var(--zone-fill,0);stroke:var(--ink-2);stroke-width:1;stroke-opacity:.45;vector-effect:non-scaling-stroke;cursor:pointer}
