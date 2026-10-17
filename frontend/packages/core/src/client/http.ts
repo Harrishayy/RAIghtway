@@ -14,7 +14,7 @@ export interface Endpoints {
 export const DEFAULT_ENDPOINTS: Endpoints = {
   videos: '/api/videos', video: '/api/videos/{id}', issues: '/api/issues', similar: '/api/issues/{id}/similar',
   frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch',
-  upload: '/api/videos', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: null,
+  upload: '/api/videos', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
 };
 
 /** Where the backend's dispatch starts and ends every route (backend/app/planning: DEPOT). */

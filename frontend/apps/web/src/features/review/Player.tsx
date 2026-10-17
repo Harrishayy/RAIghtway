@@ -12,7 +12,9 @@ import { Icon } from '@/ui/Icon';
 import { Seg } from '@/ui/Seg';
 
 export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
-  const client = useClient(); const src = client.videoUrl(video);
+  const client = useClient(); const url = client.videoUrl(video);
+  // a 404 or undecodable file falls back to stepping through keyframes
+  const [badUrl, setBadUrl] = useState<string | null>(null); const src = url && url !== badUrl ? url : null;
   const { t, playing, seekNonce, setPlaying, seek, tick, select } = usePlayback();
   const rate = useUi(s => s.rate); const setRate = useUi(s => s.setRate);
   const el = useRef<HTMLVideoElement>(null);
@@ -67,11 +69,16 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   // real backends: without a video file, hold the nearest real keyframe (never a drawn stand-in)
   const held = !sample && !near ? issues.reduce<Issue | null>((b, i) => (!b || Math.abs(i.t - t) < Math.abs(b.t - t) ? i : b), null) : null;
   const shown = near ?? held; const fix = fixAt(video, t);
+  // On footage the camera moves, so a box only fits close to its keyframe; paused on a finding, show that
+  // exact keyframe over the video so the box sits on what the model saw.
+  const d = near ? t - near.t : Infinity;
+  const boxed = src ? (d > -0.6 && d < (playing ? 0.35 : 0.6) ? near : null) : shown;
+  const still = Boolean(src && boxed && !playing);
   const drift = shown ? (t - shown.t + 1.2) / 8.2 : (t % 9) / 9;
   return (
     <>
-      <Frame placeholder={sample ? 'scene' : 'blank'} emptyLabel={issues.length ? 'No frame' : video.status === 'done' ? 'No findings on this drive' : 'Analysing…'} issue={src ? null : shown} src={shown ? client.frameUrl(shown) : null} seed={hashStr(`${video.id}${Math.floor(t / 9)}`)} drift={drift}
-        video={src ? <video ref={el} src={src} playsInline muted preload="metadata" onLoadedMetadata={e => setMediaDur(e.currentTarget.duration || 0)} /> : undefined}
+      <Frame placeholder={sample ? 'scene' : 'blank'} emptyLabel={issues.length ? 'No frame' : video.status === 'done' ? 'No findings on this drive' : 'Analysing…'} issue={boxed} src={boxed ? client.frameUrl(boxed) : null} still={still} seed={hashStr(`${video.id}${Math.floor(t / 9)}`)} drift={drift}
+        video={src ? <video ref={el} src={src} playsInline muted preload="metadata" onLoadedMetadata={e => setMediaDur(e.currentTarget.duration || 0)} onError={() => setBadUrl(url)} /> : undefined}
         hud={{
           tl: <><span className="rec" /><span className="hud-cam">{video.camera_id ?? 'camera'} · </span>{video.drive ?? video.filename}</>,
           bl: fix ? <><span className="hud-gps">{fmtCoord(fix.at[0], fix.at[1])}{fix.speed != null ? ' · ' : ''}</span>{fix.speed != null ? `${Math.round(fix.speed)} km/h` : ''}</> : null,
