@@ -178,6 +178,7 @@ export const RecommendationSchema = z.object({
 export const PlanSchema = z.looseObject({
   routes: z.array(RouteSchema).catch([]), unassigned: z.array(z.coerce.string()).catch([]),
   solver: z.enum(['cuopt', 'fallback']).catch('fallback'), solve_ms: num(0),
+  plan_id: z.string().nullable().optional().catch(undefined), paths_pending: num(0),
   unassigned_reasons: z.record(z.string(), z.string()).optional().catch(undefined),
   facilities: lenientList(FacilitySchema).optional(), hazards: z.array(HazardSchema).optional().catch(undefined),
   matrix_source: pathSource,
@@ -203,6 +204,7 @@ export const AskAnswerSchema = z.object({
   // answer is a strict string: coerce would turn a missing answer into "undefined"
   question: str(), answer: z.string().catch(''), source: z.enum(['nemotron', 'vss']).catch('vss'), times: z.array(z.coerce.number()).catch([]),
   evidence: z.array(AskEvidenceSchema).catch([]), issue_ids: z.array(z.coerce.string()).catch([]),
+  model: z.string().nullable().optional().catch(undefined),
 });
 
 /** Parses a list, dropping (and reporting) items that can't be repaired rather than failing the whole list. */

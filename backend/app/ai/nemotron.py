@@ -45,8 +45,10 @@ def _traceable(messages: list[dict]) -> list[dict]:
 
 
 async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
-                    timeout: float | None = None, max_tokens: int = 4096) -> BaseModel:
-    """Validate JSON, retry once; timeout bounds both attempts together. max_tokens includes reasoning tokens."""
+                    timeout: float | None = None, max_tokens: int = 4096, think: bool = True) -> BaseModel:
+    """Validate JSON, retry once; timeout bounds both attempts together. max_tokens includes reasoning tokens.
+    think=False switches Nemotron's reasoning off (chat_template_kwargs): seconds instead of tens of seconds, for
+    short grounded answers (chat, search answers) where the evidence is in the prompt."""
     request_messages = [
         {"role": "system", "content": "Return JSON only, without reasoning or markdown. "
          "Match this JSON schema: " + json.dumps(schema.model_json_schema())},
@@ -61,6 +63,8 @@ async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
                       "temperature": 0.2, "max_tokens": max_tokens}
             if timeout is not None:
                 kwargs["timeout"] = timeout
+            if not think:
+                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             response = await _get_client().chat.completions.create(**kwargs)
             try:
                 message = response.choices[0].message

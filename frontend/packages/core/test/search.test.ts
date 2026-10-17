@@ -28,7 +28,7 @@ describe('footage search and ask parsing', () => {
     const r = await c.searchFootage('graffiti');
     expect(r.hits.length).toBeGreaterThan(0);
     expect(r.answer_source).toBe('nemotron');
-    const a = await c.ask(vids.find(v => v.source === 'corpus')!.id, 'what happened here?', 30);
+    const a = await c.ask(vids.find(v => v.source === 'corpus')!.id, { question: 'what happened here?', t: 30, history: [{ role: 'user', content: 'hi' }] });
     expect(a.answer).toMatch(/Sample answer/);
   });
 });

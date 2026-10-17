@@ -114,6 +114,7 @@ class AskAnswer(BaseModel):                           # POST /api/videos/{id}/as
     times: list[float] = []                           # moments the answer cites, seconds on this video
     evidence: list[AskEvidence] = []
     issue_ids: list[str] = []                         # logged issues the answer drew on
+    model: str | None = None                          # who answered, for the UI ("Nemotron 3.5 Lightning")
 
 
 class ReportIssue(BaseModel):
@@ -477,6 +478,8 @@ class Plan(BaseModel):
     deferred: list[str] = []                          # triaged out: not planned in this horizon (reasons in triage)
     pinned: list[str] = []                            # operator-pinned issues in this plan's backlog
     recommendation: "Recommendation | None" = None    # the latest Nemotron + cuOpt recommendation when planned
+    plan_id: str | None = None                        # set when stored; the background road-path fill only writes to its own plan
+    paths_pending: int = 0                            # routes still drawn straight while their road paths are fetched
     scenario_id: str | None = None                    # set when this plan applied a recommendation scenario
     zones: list[str] = []                             # focus zones (ward ids, drawn zone ids, "drawn"); [] = whole city
     zone_labels: list[str] = []

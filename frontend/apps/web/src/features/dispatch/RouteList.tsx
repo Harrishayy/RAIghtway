@@ -8,8 +8,8 @@ import { CategoryLabel, Chip, SevDot } from '@/ui/marks';
 import type { RouteRow } from './DispatchView';
 import { hm, nameOf } from './schedule';
 
-export function RouteList({ rows, clock, open, onOpen, selectedIssue, onSelect, byId, onCopy }: {
-  rows: RouteRow[]; clock: number; open: string | null; onOpen: (id: string | null) => void;
+export function RouteList({ byTruck = false, rows, clock, open, onOpen, selectedIssue, onSelect, byId, onCopy }: {
+  byTruck?: boolean; rows: RouteRow[]; clock: number; open: string | null; onOpen: (id: string | null) => void;
   selectedIssue: string | null; onSelect: (id: string) => void; byId: Map<string, Issue>; onCopy: (text: string) => void;
 }) {
   return (
@@ -18,7 +18,7 @@ export function RouteList({ rows, clock, open, onOpen, selectedIssue, onSelect, 
         const isOpen = open === r.crew_id; const jobs = tl.filter(e => e.kind === 'job');
         const doneN = jobs.filter(e => clock >= e.depart_min).length; const next = jobs.find(e => clock < e.depart_min);
         return (
-          <section key={r.crew_id} className={`route-card${isOpen ? ' open' : ''}`} data-cat={r.category} data-tone={tone}>
+          <section key={r.crew_id} className={`route-card${isOpen ? ' open' : ''}`} data-cat={r.category} data-tone={byTruck ? tone : undefined}>
             <button type="button" className="route-h" aria-expanded={isOpen} onClick={() => onOpen(isOpen ? null : r.crew_id)}>
               <span className="route-id"><i className="route-swatch" aria-hidden="true" />{r.vehicle_id ?? r.crew_id}</span><CategoryLabel id={r.category} compact />
               {r.depot_label ? <span className="route-base muted small">from {r.depot_label}</span> : null}

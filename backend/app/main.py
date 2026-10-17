@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import shutil
 from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -411,9 +411,15 @@ async def search_footage(body: SearchRequest):
         raise HTTPException(503, str(exc)) from None
 
 
+class AskTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: Annotated[str, Field(max_length=2000)]
+
+
 class AskRequest(BaseModel):
     question: str
     t: Annotated[float, Field(ge=0)] | None = None              # the playhead; None asks about the whole drive
+    history: Annotated[list[AskTurn], Field(max_length=40)] = []   # earlier chat turns, oldest first (the last few are used)
 
 
 @app.post("/api/videos/{id}/ask", response_model=AskAnswer)
@@ -426,7 +432,8 @@ async def ask_video(id: str, body: AskRequest):
         log.warning("Ask unavailable (%s)", config.redact(exc))
         raise HTTPException(503, "Ask is unavailable") from None
     try:
-        return await ask.ask(video, body.question, body.t, curation.visible(store.issues_for_video(id)))
+        return await ask.ask(video, body.question, body.t, curation.visible(store.issues_for_video(id)),
+                             [turn.model_dump() for turn in body.history])
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except ask.AskUnavailable as exc:
@@ -519,7 +526,13 @@ async def dispatch_crews(request: DispatchRequest):
     except Exception as exc:
         log.warning("Dispatch failed (%s); using fallback", config.redact(exc))
         result = await _dispatch_plan(request.crews)
+    fill = importlib.import_module("app.planning.fill_paths")
+    result.plan_id, result.paths_pending = uuid4().hex, fill.pending(result)
     await asyncio.to_thread(store.set_plan, result)
+    if result.paths_pending:                   # the rest of the road paths land in the background (GET /api/plan)
+        task = asyncio.create_task(fill.fill(result.model_copy(deep=True)))
+        _analysis_tasks.add(task)
+        task.add_done_callback(_analysis_tasks.discard)
     try:                                       # the report reads the latest plan's crew facts
         report.schedule_regen()
     except Exception as exc:

@@ -13,6 +13,8 @@ interface UiState {
   order: PaneId[];
   widths: { a: number; c: number };
   mapView: 'drive' | 'city';
+  /** The Review desk's right pane: the map with the selected issue, or the chat about the open drive. */
+  rightPane: 'map' | 'chat';
   rate: number;
   /** The VSS footage search: the footage list and the timeline lane read the same query. Not restored on reload. */
   topic: string;
@@ -22,6 +24,7 @@ interface UiState {
   setOrder: (o: PaneId[]) => void;
   setWidths: (w: Partial<{ a: number; c: number }>) => void;
   setMapView: (v: 'drive' | 'city') => void;
+  setRightPane: (p: 'map' | 'chat') => void;
   setRate: (r: number) => void;
   setTopic: (q: string) => void;
   resetLayout: () => void;
@@ -31,7 +34,7 @@ const DEFAULT_ORDER: PaneId[] = ['footage', 'player', 'map'];
 const DEFAULT_WIDTHS = { a: 272, c: 380 };
 
 export const useUi = create<UiState>()(persist((set, get) => ({
-  direction: env.defaultDirection, preset: 'all', hidden: [], order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS, mapView: 'drive', rate: 4, topic: '',
+  direction: env.defaultDirection, preset: 'all', hidden: [], order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS, mapView: 'drive', rightPane: 'map', rate: 4, topic: '',
   setDirection: direction => set({ direction }),
   setPreset: preset => set({ preset, hidden: [] }),
   toggleCategory: c => {
@@ -42,6 +45,7 @@ export const useUi = create<UiState>()(persist((set, get) => ({
   setOrder: order => set({ order }),
   setWidths: w => set({ widths: { ...get().widths, ...w } }),
   setMapView: mapView => set({ mapView }),
+  setRightPane: rightPane => set({ rightPane }),
   setRate: rate => set({ rate }),
   setTopic: topic => set({ topic: topic.trim() }),
   resetLayout: () => set({ order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS }),
@@ -55,6 +59,7 @@ export const useUi = create<UiState>()(persist((set, get) => ({
     if (!p.preset || !(p.preset in CATEGORY_PRESETS)) out.preset = 'all';
     out.direction = current.direction;   // the look picker is hidden: always the default (survey)
     out.topic = '';                       // a search is per visit
+    if (p.rightPane !== 'map' && p.rightPane !== 'chat') out.rightPane = 'map';
     if (!p.widths || !Number.isFinite(p.widths.a) || !Number.isFinite(p.widths.c)) out.widths = DEFAULT_WIDTHS;
     return out;
   },

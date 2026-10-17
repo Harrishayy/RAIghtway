@@ -17,11 +17,13 @@ import { Player } from './Player';
 import { Timeline } from './Timeline';
 import { Detections } from './Detections';
 import { FilterNote } from './FilterNote';
+import { ChatPanel } from './ChatPanel';
 
 export function ReviewDesk() {
   const videos = useVideos(); const allIssues = useIssues(); const cats = useCategories();
   const { videoId, t, selectedIssue, open, select } = usePlayback();
   const mapView = useUi(s => s.mapView); const setMapView = useUi(s => s.setMapView);
+  const rightPane = useUi(s => s.rightPane); const setRightPane = useUi(s => s.setRightPane);
   // once data arrives, open on the best demo pick from the footage review, else the first finished drive
   useEffect(() => {
     if (videoId || !videos.data?.length) return;
@@ -50,8 +52,12 @@ export function ReviewDesk() {
       footage: { id: 'footage', title: 'Footage', actions: <RunButton />, body: <FootageList /> },
       player: { id: 'player', title: 'Player', actions: video ? <span className="fname mono muted">{video.filename}</span> : null, body: playerBody },
       map: {
-        id: 'map', title: 'Map', actions: <Seg size="sm" label="Map extent" value={mapView} onChange={setMapView} options={[{ value: 'drive', label: 'Drive' }, { value: 'city', label: 'City' }]} />,
-        body: <>
+        id: 'map', title: rightPane === 'chat' ? 'Chat' : 'Map',
+        actions: <span className="pane-tabs">
+          {rightPane === 'map' ? <Seg size="sm" label="Map extent" value={mapView} onChange={setMapView} options={[{ value: 'drive', label: 'Drive' }, { value: 'city', label: 'City' }]} /> : null}
+          <Seg size="sm" label="Map or chat" value={rightPane} onChange={setRightPane} options={[{ value: 'map', label: 'Map' }, { value: 'chat', label: 'Chat' }]} />
+        </span>,
+        body: rightPane === 'chat' ? <ChatPanel video={video} issues={issues} /> : <>
           <MapView label={video ? `Map of ${video.drive ?? video.filename}` : 'Map'} issues={mapIssues} emphasise={i => i.video_id === videoId} selectedId={selectedIssue}
             onSelect={i => (i.video_id === videoId ? (select(i.id), usePlayback.getState().seek(Math.max(0, i.t - 0.4))) : open(i.video_id, Math.max(0, i.t - 0.4), i.id))}
             track={video?.track} travelled={video?.duration_s ? t / video.duration_s : 0} vehicle={fix} focus={mapView === 'city' ? [] : video?.track}

@@ -1,7 +1,7 @@
 // The one seam between the UI and a backend. Screens only ever call these methods, so pointing the
 // console at a different service means writing (or configuring) one adapter, not touching components.
 import type { BBox, CategoryId, CrewCounts, Depot, Directions, DispatchOptions, Facility, FacilityInput, GeocodeHit, Hazard, Issue, LatLon, Plan, Recommendation, RecommendOptions, RecommendProgress, ReportPayload, Severity, Similar, TopicHit, Video, Zone } from '../types';
-import type { AskAnswer, TopicSearch } from '../types';
+import type { AskAnswer, AskInput, TopicSearch } from '../types';
 
 /** What this backend can do. The UI hides controls for anything switched off. */
 export interface Capabilities {
@@ -55,6 +55,8 @@ export interface RaightwayClient {
   regenerateReport(): Promise<ReportPayload>;
   /** Plans routes. `crews` is the legacy trucks-per-crew-type; `opts` carries sites, days, floor, triage, scenario. */
   dispatch(crews: CrewCounts, opts?: DispatchOptions): Promise<Plan>;
+  /** GET /api/plan: the latest stored plan (road paths fill in after dispatch returns), or null. */
+  latestPlan(): Promise<Plan | null>;
   /** Operating sites with their crews and trucks per day. */
   listFacilities(signal?: AbortSignal): Promise<Facility[]>;
   addFacility(input: FacilityInput): Promise<Facility>;
@@ -85,8 +87,8 @@ export interface RaightwayClient {
   searchTopic(query: string, signal?: AbortSignal): Promise<TopicHit[]>;
   /** The full footage search (POST /api/search): hits plus VSS's synthesis and Nemotron's answer. */
   searchFootage(query: string, signal?: AbortSignal): Promise<TopicSearch>;
-  /** Ask about one drive; `t` is the playhead (seconds), omitted to ask about the whole drive. */
-  ask(videoId: string, question: string, t?: number | null, signal?: AbortSignal): Promise<AskAnswer>;
+  /** The next turn of a chat about one drive: `t` is the playhead (omit to ask about the whole drive), `history` the earlier turns. */
+  ask(videoId: string, input: AskInput, signal?: AbortSignal): Promise<AskAnswer>;
   /** Saves an operator-reported issue (source "manual"); resolves with it once frame, GPS and work order are in. */
   createIssue(input: ManualIssueInput): Promise<Issue>;
   /** Pin/unpin an issue or override its severity; resolves with the updated issue. */

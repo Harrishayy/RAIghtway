@@ -596,6 +596,20 @@ def set_plan(p: Plan) -> None:
         _enqueue("insert_plan", p.model_copy(deep=True))
 
 
+def update_plan(p: Plan, persist: bool) -> bool:
+    """Replace the latest plan if it is still the same plan (same plan_id). persist=False keeps it in memory only
+    (progress the console polls); True also snapshots it and queues the VastDB row. False: a newer plan won."""
+    global _plan
+    with _lock:
+        if _plan is None or _plan.plan_id != p.plan_id:
+            return False
+        _plan = p.model_copy(deep=True)
+        if persist:
+            _snapshot()
+            _enqueue("insert_plan", p.model_copy(deep=True))
+        return True
+
+
 def latest_plan() -> Plan | None:
     with _lock:
         return _plan.model_copy(deep=True) if _plan else None

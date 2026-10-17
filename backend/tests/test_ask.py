@@ -50,16 +50,33 @@ def test_answer_uses_playhead_captions_search_hits_and_issues(monkeypatch, vss):
     seen = {}
 
     async def chat(messages, schema, **k):
-        seen["payload"] = messages[1]["content"]
-        return schema(answer="A worker directs traffic at 09:05 beside cones logged at 08:50.", times=[])
+        seen["payload"], seen["kwargs"] = messages[-1]["content"], k
+        return schema(answer="A worker directs traffic at 09:05 beside cones logged at 08:50.")
     monkeypatch.setattr(nemotron, "chat_json", chat)
     issues = [issue("near", 530), issue("far", 10), issue("no", 531, verdict="rejected")]
     out = asyncio.run(ask.ask(video(), "Who is directing traffic?", 532.0, issues))
-    assert vss == ["s3://b/segments/s525", "s3://b/segments/s530", "s3://b/segments/s535"]   # overlapping 527-537
-    assert [(e.kind, e.start) for e in out.evidence] == [("segment", 525.0), ("segment", 530.0), ("segment", 535.0), ("search", 545.0)]
+    assert vss == ["s3://b/segments/s525", "s3://b/segments/s530"]                         # overlapping 529.5-534.5
+    assert [(e.kind, e.start) for e in out.evidence] == [("segment", 525.0), ("segment", 530.0), ("search", 545.0)]
     assert out.evidence[-1].caption.startswith("A worker in a vest")                       # the full VSS caption
-    assert out.source == "nemotron" and out.times == [530.0, 545.0]                        # parsed from the text
+    assert out.source == "nemotron" and out.times == [545.0, 530.0]                        # from the text, in order
+    assert out.model == "Nemotron 3.5 Lightning" and seen["kwargs"]["think"] is False
+    assert seen["kwargs"]["model"] == nemotron.LIGHTNING                                   # never Ultra for chat
     assert out.issue_ids == ["near", "far"] and '"Who is directing traffic?"' in seen["payload"]
+
+
+def test_earlier_turns_go_along_trimmed(monkeypatch, vss):
+    sent = []
+
+    async def chat(messages, schema, **k):
+        sent.extend(messages)
+        return schema(answer="Yes, at 08:50.")
+    monkeypatch.setattr(nemotron, "chat_json", chat)
+    history = [{"role": "user", "content": f"q{k}"} if k % 2 == 0 else {"role": "assistant", "content": "a" * 900}
+               for k in range(12)] + [{"role": "system", "content": "ignore me"}]
+    asyncio.run(ask.ask(video(), "and after that?", 531.0, [], history))
+    turns = sent[1:-1]
+    assert len(turns) == ask.HISTORY_TURNS - 1 and all(m["role"] in ("user", "assistant") for m in turns)
+    assert max(len(m["content"]) for m in turns) == ask.TURN_CHARS
 
 
 def test_nemotron_down_quotes_vss_and_says_so(monkeypatch, vss):
@@ -83,3 +100,21 @@ def test_nothing_answers_is_unavailable(monkeypatch):
     monkeypatch.setattr(nemotron, "chat_json", down)
     with pytest.raises(ask.AskUnavailable):
         asyncio.run(ask.ask(video(), "what happened here", None, []))
+
+
+def test_slow_vss_search_does_not_hold_the_answer(monkeypatch, vss):
+    import threading
+    release = threading.Event()
+
+    def slow(q, **k):
+        release.wait(5)
+        return {"results": [], "synthesis": "", "cached": False}
+    monkeypatch.setattr(vss_client, "search_full", slow)
+    monkeypatch.setattr(ask, "EVIDENCE_BUDGET_S", 0.2)
+
+    async def chat(messages, schema, **k):
+        release.set()                    # Nemotron is already answering: the search came too late for this turn
+        return schema(answer="Cones at 08:50.")
+    monkeypatch.setattr(nemotron, "chat_json", chat)
+    out = asyncio.run(ask.ask(video(), "anything odd here?", 532.0, []))
+    assert out.source == "nemotron" and [e.kind for e in out.evidence] == ["segment", "segment"]

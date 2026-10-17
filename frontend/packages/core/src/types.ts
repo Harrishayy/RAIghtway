@@ -285,6 +285,9 @@ export interface Plan {
   unassigned: string[];
   solver: 'cuopt' | 'fallback';
   solve_ms: number;
+  /** Set when stored; `paths_pending` routes are still straight while their road paths load in the background. */
+  plan_id?: string | null;
+  paths_pending?: number;
   /** UI extra: why each unassigned job was dropped. */
   unassigned_reasons?: Record<string, string>;
   /** Backend extras: the bases in use, road alerts near the work, and whether travel times are road or straight-line. */
@@ -332,7 +335,10 @@ export interface TopicHit { video_id: string; start: number; end: number; score:
 export interface TopicSearch { query: string; hits: TopicHit[]; search?: 'vss'; synthesis?: string; answer?: string; answer_source?: 'nemotron' | null; answer_pending?: boolean; logged?: number }
 /** `POST /api/videos/{id}/ask`: an answer about one drive, from VSS captions (`evidence`) and its logged issues. */
 export interface AskEvidence { start: number; end: number; caption: string; kind: 'segment' | 'search' }
-export interface AskAnswer { question: string; answer: string; source: 'nemotron' | 'vss'; times: number[]; evidence: AskEvidence[]; issue_ids: string[] }
+export interface AskAnswer { question: string; answer: string; source: 'nemotron' | 'vss'; times: number[]; evidence: AskEvidence[]; issue_ids: string[]; model?: string | null }
+/** One earlier chat turn sent back as context with the next question. */
+export interface ChatTurn { role: 'user' | 'assistant'; content: string }
+export interface AskInput { question: string; t?: number | null; history?: ChatTurn[] }
 export interface Topic { id: string; query: string; hits: TopicHit[]; pending?: boolean }
 
 export interface Depot { lat: number; lon: number; label: string }

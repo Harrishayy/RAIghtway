@@ -193,7 +193,7 @@ def test_ask_route_codes(monkeypatch):
     monkeypatch.setattr(store, "get_video", lambda id: video("set01/video_0001") if id == "v" else None)
     monkeypatch.setattr(store, "issues_for_video", lambda id: [])
 
-    async def answer(v, q, t, issues):
+    async def answer(v, q, t, issues, history=None):
         if q == "down":
             raise ask.AskUnavailable("Neither VSS nor Nemotron could answer right now")
         return AskAnswer(question=ask.normalise(q), answer="Cones at 08:50.", source="nemotron", times=[530.0])
@@ -219,3 +219,31 @@ def test_videos_serve_the_summary_overlay(monkeypatch, tmp_path):
     started = []
     monkeypatch.setattr(summaries, "start", lambda ids, only: started.append((ids, only)) or {"running": True})
     assert asyncio.run(main.regenerate_explanations(None)) == {"running": True} and started == [(None, True)]
+
+
+def test_cached_lookup_does_not_wait_behind_a_slow_request(monkeypatch, tmp_path):
+    import threading
+    import time as clock
+    monkeypatch.setattr(vss_client.config, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(vss_client, "_cache", None)
+    started, release = threading.Event(), threading.Event()
+
+    class Reply:
+        def json(self):
+            return {"results": [hit("a1")], "llm_synthesis": ""}
+
+    def authed(*a, **k):
+        if k["json"]["query"] == "slow":
+            started.set()
+            release.wait(5)
+        return Reply()
+    monkeypatch.setattr(vss_client, "_authed", authed)
+    vss_client.search_full("fast")                                  # cached now
+    worker = threading.Thread(target=vss_client.search_full, args=("slow",))
+    worker.start()
+    started.wait(2)
+    t0 = clock.monotonic()
+    assert vss_client.search_full("fast")["cached"] is True
+    assert clock.monotonic() - t0 < 0.5                             # did not queue behind "slow"
+    release.set()
+    worker.join(5)

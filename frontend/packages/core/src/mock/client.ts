@@ -1,7 +1,7 @@
 // In-memory backend with the same contract as the real one, including a live upload that walks the
 // pipeline stages in real time. The UI cannot tell it apart from the API, which is the point: every
 // screen is built and demoed against it, and switching to the API is configuration.
-import type { Facility, Issue, LatLon, Recommendation, Zone, ReportIssue, ReportPayload, StageId, TopicHit, Video, WorkOrder } from '../types';
+import type { Facility, Issue, LatLon, Plan, Recommendation, Zone, ReportIssue, ReportPayload, StageId, TopicHit, Video, WorkOrder } from '../types';
 import { CATEGORY, CREW_FOR, STAGES } from '../registry';
 import { fmtClock } from '../format';
 import type { Capabilities, RaightwayClient } from '../client/types';
@@ -99,7 +99,7 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
   const wards: Zone[] = wardsDoc.zones.map(z => ({ id: z.id, label: z.label, kind: 'ward' as const, code: z.code, polygons: z.polygons as LatLon[][], source: wardsDoc.source, source_url: wardsDoc.source_url }));
   let drawn: Zone[] = [];
   const focusOf = (ids?: string[], polygon?: LatLon[]): Zone[] => [...[...wards, ...drawn].filter(z => ids?.includes(z.id)), ...(polygon && polygon.length >= 3 ? [{ id: 'drawn', label: 'Drawn area', kind: 'custom' as const, polygons: [polygon], source: 'Drawn in the console' }] : [])];
-  let recommendation: Recommendation | null = null; let recommendStarted = 0;
+  let recommendation: Recommendation | null = null; let lastPlan: Plan | null = null; let recommendStarted = 0;
   const inToronto = (f: { lat: number; lon: number }) => f.lat >= 43.55 && f.lat <= 43.88 && f.lon >= -79.7 && f.lon <= -79.08;
   const checkSite = (f: Facility) => {
     if (!f.label.trim()) throw new Error('The site needs a name');
@@ -138,12 +138,13 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
     async dispatch(crews, o = {}) {
       await new Promise(r => setTimeout(r, 900 + latency));
       // Legacy crew counts keep the old planner; anything per site plans round trips from the sites.
-      if (!o.sites && !o.days && !o.min_severity && !o.scenario && !o.zones && !o.polygon && Object.keys(crews).length) return planRoutes(canonical(), crews, depot);
+      if (!o.sites && !o.days && !o.min_severity && !o.scenario && !o.zones && !o.polygon && Object.keys(crews).length) return (lastPlan = planRoutes(canonical(), crews, depot));
       const pick = o.scenario && recommendation?.id === o.scenario.recommendation_id ? recommendation.scenarios.find(x => x.id === o.scenario!.scenario_id) : undefined;
       const focus = focusOf(pick?.zones?.length ? pick.zones : o.zones, o.polygon);
       const plan = planRounds(canonical(), sites, pick ? { sites: pick.sites, days: o.days, min_severity: pick.min_severity, focus } : { ...o, focus });
-      return { ...plan, recommendation, scenario_id: pick?.id ?? null };
+      return (lastPlan = { ...plan, recommendation, scenario_id: pick?.id ?? null });
     },
+    latestPlan: () => wait(lastPlan),
     listFacilities: signal => wait(sites, signal),
     listZones: signal => wait([...wards, ...drawn], signal),
     async addZone(label, polygon) {
@@ -209,11 +210,11 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
       return { query, hits, search: 'vss', logged: hits.length, synthesis: hits.length ? `Sample footage shows ${hits[0]!.caption.toLowerCase()}.` : `Nothing matching “${query}” is visible in the sample footage.`,
         answer: hits.length ? `“${query}” appears at ${hits.length} moments on ${drives} sample drive${drives === 1 ? '' : 's'}. All of them are already logged as issues.` : '', answer_source: hits.length ? 'nemotron' : null };
     },
-    async ask(videoId, question, t, signal) {
+    async ask(videoId, { question, t }, signal) {
       const v = allVideos().find(x => x.id === videoId); if (!v) throw new Error('Video not found');
       const near = world.issues.filter(i => i.video_id === videoId).sort((a, b) => Math.abs(a.t - (t ?? 0)) - Math.abs(b.t - (t ?? 0))).slice(0, 3);
       const first = near[0];
-      return wait({ question, source: 'nemotron' as const, times: near.map(i => Math.round(i.t)), issue_ids: near.map(i => i.id),
+      return wait({ question, source: 'nemotron' as const, model: 'Nemotron 3.5 Lightning (sample)', times: near.map(i => Math.round(i.t)), issue_ids: near.map(i => i.id),
         evidence: near.map(i => ({ start: Math.max(0, i.t - 2.5), end: i.t + 2.5, caption: `Sample caption: ${i.description}.`, kind: 'segment' as const })),
         answer: first ? `Sample answer: near ${fmtClock(first.t)} the footage shows ${first.description.toLowerCase()}${near[1] ? `, and at ${fmtClock(near[1].t)} ${near[1].description.toLowerCase()}` : ''}.` : 'Sample answer: nothing is logged on this drive.' }, signal);
     },

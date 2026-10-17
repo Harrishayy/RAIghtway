@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES, CATEGORY_FOR_CREW, SHIFT_MINUTES, fmtShift, inZone, isOpen, routeHome, summarizeIssues, zoneCounts, type Zone, type CategoryId, type CrewType, type Facility, type LatLon, type Route, type Scenario, type ScheduleEntry, type ShiftTotals, type SiteTrucks } from '@raightway/core';
 import { useClient } from '@/domain/client';
-import { useAddZone, useDispatch, useFacilities, useHazards, useIssues, useLatestPlan, useLatestRecommendation, useRecommend, useRemoveZone, useUpdateFacility, useZones } from '@/domain/queries';
+import { useAddZone, useDispatch, useFacilities, useHazards, useIssues, useClearPlan, useLatestPlan, usePlanPaths, useLatestRecommendation, useRecommend, useRemoveZone, useUpdateFacility, useZones } from '@/domain/queries';
 import { toast } from '@/state/toast';
 import { usePlayback } from '@/state/playback';
 import { useCategories } from '@/state/ui';
@@ -36,6 +36,8 @@ export function DispatchView() {
   const recommend = useRecommend(); const latestRec = useLatestRecommendation();
   const { selectedIssue, select } = usePlayback();
   const [panel, setPanel] = useState(true); const [tab, setTab] = useState<Tab>('plan'); const [crew, setCrew] = useState<string | null>(null);
+  // routes on the map and the cards: coloured by the kind of work (category), or one colour per truck
+  const [colourBy, setColourBy] = useState<'type' | 'truck'>('type'); const forget = useClearPlan();
   const [settings, setSettings] = useState<PlanSettings>({ floor: 3, days: 1, triage: true }); const [dayPick, setDay] = useState(1);
   const roadsOn = client.capabilities.directions; const sitesOn = client.capabilities.sites;
   const [planned, setPlanned] = useState<{ path: LatLon[]; category: CategoryId } | null>(null); const [alertFocus, setAlertFocus] = useState<LatLon[] | null>(null);
@@ -57,7 +59,9 @@ export function DispatchView() {
   const total = Object.values(visibleTrucks).reduce((s, t) => s + Object.values(t).reduce((a, b) => a + (b ?? 0), 0), 0);
   const depot = client.depot();
   const byId = useMemo(() => new Map((issues.data ?? []).map(i => [i.id, i])), [issues.data]);
-  const plan = solve.data ?? latest.data ?? null;
+  // the cached plan first: background road paths update it after the dispatch call returned
+  const plan = latest.data ?? solve.data ?? null;
+  usePlanPaths(plan);
   const rec = recommend.data ?? latestRec.data ?? null;
   const horizon = plan?.days?.length ? Math.max(...plan.days.map(d => d.day)) : 1;
   const day = dayPick > horizon ? 1 : dayPick;
@@ -75,7 +79,7 @@ export function DispatchView() {
       ...(focusIds.length ? { zones: focusIds } : {}), ...(inline ? { polygon: inline } : {}),
       ...(extra.scenario && rec ? { scenario: { recommendation_id: rec.id, scenario_id: extra.scenario.id } } : {}) } : undefined;
     const crews = Object.fromEntries(crewTypes.map(t => [t, sum.baselineCrews[t] ?? 1]));
-    solve.mutate({ crews, opts }, { onSuccess: () => { setTab('routes'); setDay(1); setClock(0); setPlaying(true); } });
+    solve.mutate({ crews, opts }, { onSuccess: () => { setTab('routes'); setDay(1); setClock(0); setPlaying(false); } });
   };
   const setTrucks = (f: Facility, crewType: CrewType, n: number) => updateSite.mutate({ id: f.id, patch: { vehicles: { ...(f.vehicles ?? {}), [crewType]: Math.max(0, Math.min(20, n)) } } });
   const apply = (s: Scenario) => {
@@ -105,7 +109,7 @@ export function DispatchView() {
   }, [playing, speed]);
 
   const routes: MapRoute[] = rows.map(({ r, tl, tone }) => ({
-    id: r.crew_id, category: r.category, path: r.path, dim: Boolean(crew && crew !== r.crew_id), tone: tone - 1,
+    id: r.crew_id, category: r.category, path: r.path, dim: Boolean(crew && crew !== r.crew_id), tone: colourBy === 'truck' ? tone - 1 : undefined,
     // numbered stops + ETAs for the truck in focus (or every truck when only a few are out), so the overview stays readable
     stops: crew === r.crew_id || (!crew && rows.length <= 3) ? tl.filter(e => e.kind === 'job').map((e, k) => ({ at: [e.lat, e.lon] as LatLon, n: k + 1, eta: fmtShift(e.arrive_min), done: clock >= e.depart_min })) : undefined,
     at: truckAt(tl, clock),
@@ -158,6 +162,7 @@ export function DispatchView() {
         <div className="toolbar">
           <Seg size="sm" label="Panel" value={tab} onChange={setTab} options={[{ value: 'plan', label: 'Plan' }, { value: 'triage', label: 'Triage' }, { value: 'routes', label: plan ? `Routes · ${rows.length}` : 'Routes' }, ...(roadsOn ? [{ value: 'roads' as const, label: 'Roads' }] : [])]} />
           <button type="button" className="btn btn-primary btn-sm push" onClick={() => go()} disabled={solve.isPending || (sitesOn ? !total : !crewTypes.length)}><Icon name="route" />{solve.isPending ? 'Routing…' : plan ? 'Re-plan' : 'Plan routes'}</button>
+          {plan && !solve.isPending ? <button type="button" className="btn btn-secondary btn-sm" onClick={() => { if (window.confirm('Clear this plan? Routes and schedules leave the map; Re-plan makes a new one.')) { solve.reset(); forget(); setPlaying(false); setClock(0); setCrew(null); setTab('plan'); } }}><Icon name="x" />Clear plan</button> : null}
         </div>
         <div className="scroll">
           {issues.isPending ? <Loading rows={6} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : tab === 'roads' ? (
@@ -183,10 +188,13 @@ export function DispatchView() {
                 <p className="label">{solverLabel} · {(plan.solve_ms / 1000).toFixed(1)} s{plan.matrix_source === 'road' ? ' · street times' : ' · straight-line times'} · triage {plan.triage ? (plan.triage.model === 'rules' ? 'by rules' : plan.triage.model_name ?? plan.triage.model) : 'off'}{plan.scenario_id ? ' · recommended scenario' : ''}</p>
                 {horizon > 1 ? <Seg size="sm" label="Day" value={day} onChange={d => { setDay(d); setClock(0); setCrew(null); }} options={(plan.days ?? []).map(d => ({ value: d.day, label: `Day ${d.day} · ${d.jobs}` }))} /> : null}
                 {(() => { const d = plan.days?.find(x => x.day === day); return d ? <p className="small muted num">{d.jobs} jobs · {d.trucks} trucks · {Math.round(d.drive_min / 6) / 10} h driving · {Math.round(d.work_min / 6) / 10} h on site{d.distance_km ? ` · ${d.distance_km} km` : ''} · last back {fmtShift(d.last_back_min)}{d.solver === 'fallback' ? ' · fallback router' : ''}</p> : null; })()}
+                {plan.paths_pending ? <p className="small muted">Drawing road paths: {plan.paths_pending} route{plan.paths_pending > 1 ? 's' : ''} still straight, filling in one a second.</p> : null}
                 {plan.zone_labels?.length ? <p className="small muted">Focus: {plan.zone_labels.join(', ')}{plan.outside_zone ? ` · ${plan.outside_zone} open jobs outside left out` : ''}</p> : null}
                 {pinnedDeferred.length ? <p className="small rec-caveat"><Icon name="alert" />{pinnedDeferred.length} pinned job{pinnedDeferred.length > 1 ? 's' : ''} not planned: {pinnedDeferred[0]!.reason}</p> : null}
                 {!rows.length ? <Empty title="No trucks out this day">Nothing left to do, or no trucks for these jobs.</Empty> : null}
-                <RouteList rows={rows} clock={clock} open={crew} onOpen={setCrew} selectedIssue={selectedIssue} onSelect={select} byId={byId} onCopy={t => void copyBrief(t)} />
+                <div className="row routes-colour"><Seg size="sm" label="Colour routes by" value={colourBy} onChange={setColourBy} options={[{ value: 'type', label: 'By type' }, { value: 'truck', label: 'By truck' }]} />
+                  {colourBy === 'type' ? <span className="routes-legend">{[...new Set(rows.map(a => a.r.category))].map(c => <span key={c} data-cat={c}><i className="route-swatch" aria-hidden="true" />{CATEGORIES.find(x => x.id === c)?.label ?? c} · {rows.filter(a => a.r.category === c).length}</span>)}</span> : null}</div>
+                <RouteList byTruck={colourBy === 'truck'} rows={rows} clock={clock} open={crew} onOpen={setCrew} selectedIssue={selectedIssue} onSelect={select} byId={byId} onCopy={t => void copyBrief(t)} />
                 {plan.unassigned.length ? (<><div className="comp-h mt"><h3>Not reached</h3><Chip tone="hold">{plan.unassigned.length}</Chip></div>
                   <ul className="unassigned">{plan.unassigned.slice(0, 30).map(id => { const i = byId.get(id); return <li key={id}><button type="button" onClick={() => select(id)}>{i ? <CategoryLabel id={i.category} compact /> : null}<span>{nameOf(i) ?? id}</span><span className="muted">{plan.unassigned_reasons?.[id] ?? 'Shift full'}</span></button></li>; })}</ul></>) : null}
                 {plan.deferred?.length ? <p className="small muted mt">{plan.deferred.length} jobs wait (below the floor or beyond capacity). See Triage for the reasons.</p> : null}

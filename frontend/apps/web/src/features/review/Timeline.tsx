@@ -6,7 +6,6 @@ import { CATEGORY, clamp, fmtClock, issueLabel, type CategoryId, type Issue, typ
 import { usePlayback } from '@/state/playback';
 import { useSize } from '@/lib/useSize';
 import { Icon } from '@/ui/Icon';
-import { AskDrive } from './AskDrive';
 import { loggedIn, useFootageSearch } from './FootageSearch';
 
 export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[]; cats: CategoryId[] }) {
@@ -31,7 +30,6 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
   };
   return (
     <div className="tl">
-      <AskDrive key={video.id} video={video} issues={issues} />
       <div className="tl-ruler" ref={ruler} aria-hidden="true">{ticks.map(s => <span key={s} style={{ left: `${(s / dur) * 100}%` }}>{fmtClock(s)}</span>)}</div>
       <div className="tl-lanes" onPointerDown={scrub}>
         {cats.map(c => {

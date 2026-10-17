@@ -24,7 +24,8 @@ TOKEN_TTL_S = 20 * 60          # used when the JWT has no readable exp
 CACHE_FILE = "vss_search_cache.json"
 _HEADERS = {"User-Agent": "curl/8.5.0", "Accept": "application/json"}
 
-_lock = RLock()
+_lock = RLock()               # one VSS request at a time
+_cache_lock = RLock()         # the cache alone: a cached answer never waits behind a slow request
 _token: str | None = None
 _token_expires = 0.0
 _last_call = 0.0
@@ -96,6 +97,17 @@ def _cache_path() -> Path:
     return Path(config.STATE_DIR) / CACHE_FILE
 
 
+def _cached(key: str) -> dict | None:
+    with _cache_lock:
+        return _load_cache().get(key)
+
+
+def _store(key: str, entry: dict) -> None:
+    with _cache_lock:
+        _load_cache()[key] = entry
+        _save_cache()
+
+
 def _load_cache() -> dict[str, dict]:
     global _cache
     if _cache is None:
@@ -151,38 +163,39 @@ def search_full(query: str, top_k: int = 100, camera_id: str = "pie_cam-3",
             "min_similarity": min_similarity, "hybrid_text_weight": hybrid_text_weight,
             "time_filter": "all", "metadata_filters": {"camera_id": camera_id}}
     key = json.dumps(body, sort_keys=True)
-    with _lock:
-        cache = _load_cache()
-        if key in cache:
-            entry = cache[key]
-            return {"results": entry["results"], "synthesis": entry.get("synthesis", ""), "cached": True}
-        try:
-            data = _authed("POST", "/api/v1/search", json=body).json()
-        except Exception as exc:
-            raise RuntimeError(f"VSS search failed ({config.redact(exc)})") from None
-        results = [r for r in data.get("results", []) if isinstance(r, dict)]
-        synthesis = _synthesis(data.get("llm_synthesis"))
-        cache[key] = {"results": results, "synthesis": synthesis, "at": time.time()}
-        _save_cache()
-        log.info("VSS search %r: %d hits", query, len(results))
-        return {"results": results, "synthesis": synthesis, "cached": False}
+    hit = _cached(key)
+    if hit is None:
+        with _lock:
+            hit = _cached(key)            # another caller may have fetched it while this one queued
+            if hit is None:
+                try:
+                    data = _authed("POST", "/api/v1/search", json=body).json()
+                except Exception as exc:
+                    raise RuntimeError(f"VSS search failed ({config.redact(exc)})") from None
+                results = [r for r in data.get("results", []) if isinstance(r, dict)]
+                synthesis = _synthesis(data.get("llm_synthesis"))
+                _store(key, {"results": results, "synthesis": synthesis, "at": time.time()})
+                log.info("VSS search %r: %d hits", query, len(results))
+                return {"results": results, "synthesis": synthesis, "cached": False}
+    return {"results": hit["results"], "synthesis": hit.get("synthesis", ""), "cached": True}
 
 
 def segment_caption(source: str) -> str:
     """VSS's caption (reasoning_content) for one segment, cached like searches. "" when VSS has none."""
     key = "segment:" + source
-    with _lock:
-        cache = _load_cache()
-        if key in cache:
-            return cache[key].get("caption", "")
-        try:
-            data = _authed("GET", "/api/v1/videos/metadata", params={"source": source}).json()
-        except Exception as exc:
-            raise RuntimeError(f"VSS segment metadata failed ({config.redact(exc)})") from None
-        caption = data.get("reasoning_content") if isinstance(data, dict) else None
-        cache[key] = {"caption": caption if isinstance(caption, str) else "", "at": time.time()}
-        _save_cache()
-        return cache[key]["caption"]
+    hit = _cached(key)
+    if hit is None:
+        with _lock:
+            hit = _cached(key)
+            if hit is None:
+                try:
+                    data = _authed("GET", "/api/v1/videos/metadata", params={"source": source}).json()
+                except Exception as exc:
+                    raise RuntimeError(f"VSS segment metadata failed ({config.redact(exc)})") from None
+                caption = data.get("reasoning_content") if isinstance(data, dict) else None
+                hit = {"caption": caption if isinstance(caption, str) else "", "at": time.time()}
+                _store(key, hit)
+    return hit.get("caption", "")
 
 
 def stream_url(source: str) -> str:

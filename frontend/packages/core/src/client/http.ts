@@ -6,7 +6,7 @@ import { ApiError, type Capabilities, type RaightwayClient, type UploadOptions }
 
 export interface Endpoints {
   videos: string; video: string; issues: string; similar: string; frame: string;
-  report: string; regenerateReport: string; dispatch: string; upload: string; run: string; search: string;
+  report: string; regenerateReport: string; dispatch: string; plan: string; upload: string; run: string; search: string;
   /** POST: ask about one drive. */
   ask: string;
   hazards: string; directions: string;
@@ -21,7 +21,7 @@ export interface Endpoints {
 }
 export const DEFAULT_ENDPOINTS: Endpoints = {
   videos: '/api/videos', video: '/api/videos/{id}', issues: '/api/issues', similar: '/api/issues/{id}/similar',
-  frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch', ask: '/api/videos/{id}/ask',
+  frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch', plan: '/api/plan', ask: '/api/videos/{id}/ask',
   upload: '/api/videos', run: '/api/run', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
   createIssue: '/api/issues', updateIssue: '/api/issues/{id}',
   facilities: '/api/facilities', facility: '/api/facilities/{id}', facilitiesReset: '/api/facilities/reset', geocode: '/api/geocode',
@@ -114,6 +114,7 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     async regenerateReport() { return parse.report((tx.report ?? (x => x))(await request('POST', url(ep.regenerateReport), { timeoutMs: slowTimeout }))); },
     // The backend re-reads the VAST index before it answers, so this can take tens of seconds.
     async run() { return withVideoUrl(parse.video(normVideo((tx.video ?? (x => x))(await request('POST', url(ep.run), { timeoutMs: slowTimeout }))))); },
+    async latestPlan() { const body = await request('GET', url(ep.plan)); return body ? parse.plan((tx.plan ?? (x => x))(body)) : null; },
     async dispatch(crews: CrewCounts, opts: DispatchOptions = {}) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews, ...opts }, timeoutMs: slowTimeout }))); },
     async listFacilities(signal) { return caps.sites ? parse.facilities(await request('GET', url(ep.facilities), { signal })) : []; },
     async addFacility(input: FacilityInput) { return parse.facility(await request('POST', url(ep.facilities), { json: input })); },
@@ -163,8 +164,9 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
       if (!caps.topicSearch) return { query, hits: [] };
       return parse.topicSearch((tx.search ?? (x => x))(await request('POST', url(ep.search), { json: { query }, signal, timeoutMs: Math.max(timeout, 30_000) })), query);
     },
-    async ask(videoId, question, t, signal) {
-      return parse.askAnswer(await request('POST', url(ep.ask, videoId), { json: { question, t: t ?? null }, signal, timeoutMs: Math.max(timeout, 45_000) }));
+    // VSS evidence (serialised, cached) then Nemotron Lightning with reasoning off: seconds, but allow a cold VSS queue.
+    async ask(videoId, { question, t, history }, signal) {
+      return parse.askAnswer(await request('POST', url(ep.ask, videoId), { json: { question, t: t ?? null, history: (history ?? []).slice(-8) }, signal, timeoutMs: Math.max(timeout, 45_000) }));
     },
     // Waits on ffmpeg, GPS, Nemotron and Cosmos-Embed1 on the backend (each best effort), so allow the slow timeout.
     async createIssue(input) { return parse.issue((tx.issue ?? (x => x))(await request('POST', url(ep.createIssue), { json: input, timeoutMs: slowTimeout }))); },

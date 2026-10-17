@@ -367,7 +367,7 @@ async def _write_answer(key: str, query: str, top: list[TopicHit], total: int, l
             {"role": "system", "content": SEARCH_ANSWER_PROMPT},
             {"role": "user", "content": json.dumps({"search": query, "matches_shown": len(top),
                                                     "matches_total": total, "matches": matches})},
-        ], SearchAnswer, timeout=ANSWER_BUDGET_S)
+        ], SearchAnswer, timeout=ANSWER_BUDGET_S, think=False)   # reasoning off: ~1 s, and no empty replies
     except Exception as exc:
         log.warning("Search answer for %r skipped (%s)", query, config.redact(exc))
         return ""

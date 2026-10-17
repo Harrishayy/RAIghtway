@@ -62,6 +62,25 @@ export function useDispatch() {
 export function useLatestPlan() {
   return useQuery<Plan | null>({ queryKey: keys.plan, queryFn: () => null, enabled: false, initialData: null, staleTime: Infinity });
 }
+/** While the latest plan's road paths are still loading in the background, poll GET /api/plan and swap in
+ *  each update (only for the same plan, so a Clear plan or a newer plan isn't overwritten). */
+export function usePlanPaths(plan: Plan | null) {
+  const c = useClient(); const qc = useQueryClient(); const pending = Boolean(plan?.plan_id && (plan.paths_pending ?? 0) > 0);
+  useQuery({
+    queryKey: ['plan', 'paths', plan?.plan_id ?? null], enabled: pending, refetchInterval: pending ? 2500 : false,
+    queryFn: async () => {
+      const next = await c.latestPlan();
+      const now = qc.getQueryData<Plan | null>(keys.plan);
+      if (next && now && next.plan_id === now.plan_id) qc.setQueryData(keys.plan, next);
+      return next?.paths_pending ?? 0;
+    },
+  });
+}
+/** Forget the plan in this session (the console's Clear plan); the next Plan routes starts fresh. */
+export function useClearPlan() {
+  const qc = useQueryClient();
+  return () => qc.setQueryData(keys.plan, null);
+}
 /** Operating sites (transfer stations, collection, road and cleaning yards) with trucks per day. */
 export function useFacilities() {
   const c = useClient();
@@ -170,11 +189,7 @@ export function useTopic(query: string) {
     // Nemotron's answer can outlast the request; the backend finishes it in the background, so ask again until it lands
     refetchInterval: query => (query.state.data?.answer_pending && query.state.dataUpdateCount < 12 ? 4000 : false) });
 }
-/** Ask what happened on a drive (VSS evidence, Nemotron answer). Errors stay on the mutation for the panel to show. */
-export function useAsk() {
-  const c = useClient();
-  return useMutation({ mutationFn: (a: { videoId: string; question: string; t: number | null }) => c.ask(a.videoId, a.question, a.t) });
-}
+
 /** Planning zones: the City's wards and areas drawn in the console (they change rarely). */
 export function useZones() {
   const c = useClient();
