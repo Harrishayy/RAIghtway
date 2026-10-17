@@ -1,0 +1,17 @@
+# agent 1: API
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-multipart
+# agent 2: VAST data layer
+vastdb
+pyarrow
+pyyaml
+numpy
+boto3
+adbc-driver-manager==1.0.0
+# agent 3: model clients
+httpx
+openai
+weave
+# agents 4-8: append below
