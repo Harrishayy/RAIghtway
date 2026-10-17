@@ -28,7 +28,7 @@ pnpm dev:mock                # or: built-in sample data, no backend needed
 Open <http://localhost:3000>. You should see the **Review** desk with seven Toronto drives.
 
 **Try the sample data:**
-- Press **Upload** and pick any video file. The sample backend runs a ~14-second pipeline: findings appear live, and two of them merge into issues seen earlier.
+- Press **Run** on Review. The sample backend runs a ~14-second pipeline: findings appear live, and two of them merge into issues seen earlier.
 - On **Dispatch**, press **Plan routes**.
 
 ### Scripts (run from `frontend/`)
@@ -93,7 +93,7 @@ Every response is validated by the zod schemas in `packages/core/src/schema.ts`,
 - A missing optional field gets a default.
 - A list item that can't be repaired is dropped, with a console warning, rather than breaking the screen.
 
-Click the **status chip** at the top right to see which backend is connected, whether it answers, and which capabilities are on.
+The status chip (`layout/BackendStatus.tsx`) is built but not mounted, so check the backend with `curl $RAIGHTWAY_API_URL/api/health` or `pnpm backend:status`.
 
 ### What the backend is expected to serve
 
@@ -103,13 +103,17 @@ These are the defaults (`architecture.md` §5). All of them can be overridden as
 |---|---|
 | `GET /api/videos` | Footage list, live progress (polled) |
 | `GET /api/videos/{id}` | `{video, issues}` for the open drive |
-| `POST /api/videos` (multipart `file`) | Upload |
+| `POST /api/run` | Run: analyse new footage live (the Footage pane's button) |
+| `POST /api/videos` (multipart `file`) | Upload (the button is not mounted) |
 | `GET /api/issues` | Map, Issues, Report, Dispatch |
 | `GET /api/issues/{id}/similar` | Similar issues on the issue card |
 | `GET /api/frames/{id}` | Frame image (a drawn placeholder is shown if missing) |
 | `GET /api/report`, `POST /api/report` | Report (404 means "none yet") |
-| `POST /api/dispatch` `{crews}` | Routes |
-| `POST /api/search` `{query}` | Topic search lane (only when `topicSearch` is on) |
+| `POST /api/dispatch` `{sites, days, min_severity, triage, zones}`, `GET /api/plan` | Dispatch plan; the latest plan |
+| `POST /api/dispatch/recommend` | The Recommend card |
+| `POST /api/videos/{id}/ask` | The Chat tab |
+| `/api/facilities`, `/api/zones`, `/api/geocode`, `/api/hazards`, `POST /api/directions` | Sites, focus areas, road alerts and detours |
+| `POST /api/search` `{query}` | Footage search and its timeline lane (only when `topicSearch` is on) |
 
 **Optional extras the UI uses when present:**
 - `Video.gps[]` (1 Hz `{t, lat, lon, heading, speed_kmh}`) drives the moving car on the map and the speed lane.
@@ -190,7 +194,7 @@ Every map goes through `features/map/MapView.tsx`, which has one set of props fo
 
 There are three looks, Survey, Night Shift and Fresh Paint, over one component set. The design reference, with every component, the tokens and the build spec, is at `../docs/design/directions/index.html`. Open that file in a browser.
 
-Change the default with `NEXT_PUBLIC_DEFAULT_DIRECTION`. Users can switch looks from the top bar.
+The console ships in Survey; preview another look with `NEXT_PUBLIC_DEFAULT_DIRECTION` (restart dev).
 
 ---
 
@@ -206,7 +210,7 @@ pnpm build && pnpm start          # port 3000; set PORT to change it
 
 ## Troubleshooting
 
-- **The status chip says "Unreachable".** Open it to see the error. Check `RAIGHTWAY_API_URL`, and that `curl $RAIGHTWAY_API_URL/api/videos` works from the machine running Next. Restart the dev server after env changes.
+- **Screens show "Couldn't load this".** Check `RAIGHTWAY_API_URL`, and that `curl $RAIGHTWAY_API_URL/api/videos` works from the machine running Next. Restart the dev server after env changes.
 - **A screen is empty but the backend has data.** Look in the browser console for `[raightway] dropped a … that does not match the contract`. It lists the fields that failed validation. Fix the backend, or add a `transform` in `config/backend.ts`.
 - **Layout looks wrong after a code change to panes.** Clear the saved layout: `localStorage.removeItem('raightway:ui')` in the browser console.
 - **`pnpm` not found.** Run `corepack enable`.

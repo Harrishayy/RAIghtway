@@ -1,6 +1,7 @@
 # README media
 
-The root `README.md` shows these recordings. Capture them from the console against the live backend
+The root `README.md` shows `review.png`, `issues.png`, `report.png` and `dispatch.png` (1920×1080 screenshots). To
+swap in recordings, capture these and point the README at the GIFs. Capture them from the console against the live backend
 (`pnpm dev`), in the Survey look, at 1600×1000, and trim idle time. Keep each GIF under about 8 MB so
 GitHub renders it inline; put full-quality `.mp4` versions next to them if you have them.
 

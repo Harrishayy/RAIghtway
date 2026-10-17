@@ -13,12 +13,12 @@ Environment facts were checked on 16 Oct against the guide repo, the `vss-bluepr
 |---|---|
 | User | A city operations manager planning tomorrow's maintenance work |
 | Product | Fleet footage → issues found and graded → per-video explanations → map with evidence frames → situation report with recommended crews → cuOpt-optimised crew routes |
-| Demo | About **1 minute**: populated map (from yesterday's fleet footage) → drop in a new clip and watch it analyse live → click an issue to see the frame with a bounding box → report → dispatch, with routes appearing on the map |
+| Demo | *As built (17 Oct): 2 minutes, scripted in `README.md` "Demo"; Run replaced the upload.* Planned: about **1 minute**: populated map (from yesterday's fleet footage) → drop in a new clip and watch it analyse live → click an issue to see the frame with a bounding box → report → dispatch, with routes appearing on the map |
 | VAST usage | **Level 1:** VAST S3 for all media; VastDB tables as the system of record. **Level 2:** VastDB vector search over issue embeddings (similar issues, deduplication) |
 | Live analysis | Our own pipeline calling the models directly; results stored in VAST. The guide limits the challenge path to re-ingesting the already-segmented corpus, and NYC teams saw re-ingest jobs stuck for 40+ min. |
 | Hosting | Runs on the workshop VM, opened through Cursor port forwarding. No Kubernetes. |
-| Stack | Frontend: React + Vite + Tailwind. Backend: Python + FastAPI. |
-| Build style | Hackathon-lean: no tests, CI, Docker or auth. Quick checks on a few samples only. |
+| Stack | Frontend: React + Vite + Tailwind. Backend: Python + FastAPI. *As built: Next.js 16 + React 19, MapLibre, no Tailwind; Next rewrites `/api` to the backend, tunnelled by `pnpm dev`.* |
+| Build style | Hackathon-lean: no tests, CI, Docker or auth. Quick checks on a few samples only. *As built: offline pytest and vitest suites, run before every change.* |
 | Severity | 1–5 with a written rubric (3.3) |
 | Issue panel | Also shows similar issues from VastDB vector search (slightly beyond `ui_spec.md`) |
 | Live clip | Taken from a street another drive also covered, so dedupe fires on stage |
@@ -184,7 +184,8 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 
 ### 3.5 Dedupe and similar issues (VastDB Level 2)
 - **Why:** an issue reappears in consecutive pieces, while the car waits at lights, and on other drives (about 16% of ~30 m street cells are covered by more than one PIE drive set).
-- **Rule:** a detection is a re-sighting of canonical issue X if it has the same category, is within about 35 m, and has cosine similarity above a threshold calibrated on a few known pairs. If the pairs don't separate, use category and distance, and keep the vector for ranking. Check within the clip in memory and against history with one VastDB SQL query (3.1), processing detections in time order so parallel pieces can't race.
+- **As built:** `DEDUPE_MODE = "distance"`: same category within 35 m, against the in-memory canonical issues. On the VM, crop similarity between drives was 0.1–0.6 even for the same pothole, so the pairs didn't separate and the vector is kept for similar issues only. Vector mode stays in `dedupe.py`, off.
+- **Rule (planned):** a detection is a re-sighting of canonical issue X if it has the same category, is within about 35 m, and has cosine similarity above a threshold calibrated on a few known pairs. If the pairs don't separate, use category and distance, and keep the vector for ranking. Check within the clip in memory and against history with one VastDB SQL query (3.1), processing detections in time order so parallel pieces can't race.
 - **History means corpus issues.** Uploads aren't history for later uploads, so rehearsals and repeat demos of a clip can't become re-sightings of themselves.
 - **Storage:** a re-sighting is an `issues` row with `duplicate_of = X`. The map and dispatch use canonical issues only, and the UI can show "seen N times". A canonical issue's severity is the maximum over its sightings, computed in memory because rows are never updated.
 - **Similar issues (shown in the issue panel):** `GET /api/issues/{id}/similar` runs the same SQL without the location filter, excluding the issue itself, e.g. to find the same tag on other walls. Show the top 3–5 as thumbnails.
@@ -211,7 +212,7 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 - **Hosted API (build.nvidia.com sample):** `POST https://optimize.api.nvidia.com/v1/nvidia/cuopt` with `Authorization: Bearer $NVIDIA_API_KEY` and `Accept: application/json`; body `{"action": "cuOpt_OptimizedRouting", "data": {...}, "client_version": ""}`. A 202 means poll `GET https://optimize.api.nvidia.com/v1/status/{NVCF-REQID}` (from the response header) until it returns 200. Large requests need NVCF's asset upload, so keep to about 100 jobs with integer-minute matrices. The hosted solver is marked non-commercial use only.
 - **Categorise, then route each category from its own bases** (`backend/app/planning/`):
   - The pipeline's structured output is normalised onto the six categories (`prompts.normalise_category`: "pothole" → pavement, "garbage"/"trash" → waste, "construction"/"cones" → work_zone, …), so a model or upstream label that isn't an exact category name is kept rather than dropped.
-  - **Sites** (`facilities.json`, 21 real City of Toronto sites, each with an address and a source URL): 7 Solid Waste transfer stations, 3 Solid Waste collection yards, 9 Transportation Services road-operations yards (Toryork hosts Signs and Pavement Markings) and 2 street-cleaning yards. Only Morningside is `assumed` (the yard is listed, its address is not). Each site stores **trucks per day per crew type** (`Facility.vehicles`). The Sites tab adds, edits and removes sites: edits live in `state/facilities.json` over the bundled list (atomic writes; `POST /api/facilities/reset` restores it). Set `FACILITIES_FILE` to swap the bundled list.
+  - **Sites** (`facilities.json`, 25 sites, each with an address): 7 Solid Waste transfer stations, 3 Solid Waste collection yards, 13 road-operations yards (Toryork hosts Signs and Pavement Markings) and 2 street-cleaning yards. 20 are City of Toronto sites with a source URL; 5 are `assumed`: Morningside (the yard is listed, its address is not) and four street depots placed by hand. Each site stores **trucks per day per crew type** (`Facility.vehicles`). The Sites tab adds, edits and removes sites: edits live in `state/facilities.json` over the bundled list (atomic writes; `POST /api/facilities/reset` restores it). Set `FACILITIES_FILE` to swap the bundled list.
   - Every job is assigned to the nearest site with a truck of its crew type. (An older request with only `crews` shares those trucks over the sites by workload, as before.)
   - **Triage before routing** (`triage.py`): Nemotron Ultra (W&B Inference, traced in Weave) proposes today / later / defer per job with a reason; code keeps the hard rules: the user's severity floor, crews with no trucks, severity 5 and operator-pinned jobs today, S4 never deferred while there is room, today's minutes within capacity, routine jobs today only next to other work. Rules decide when the model doesn't answer; `Plan.triage.model` says which.
   - **Round trips over days:** every truck leaves its site at 08:00, is back by 16:00, takes a 30-minute lunch (a cuOpt vehicle break between 11:30 and 13:00, at a job site), and severity 5 jobs have a start window before noon. Day by day, (crew type, site group) units are packed into problems of at most 100 jobs; what a day can't fit rolls into the next. Each route carries its day, the full `schedule` (leave, drive / arrive / work / leave per stop, lunch, back) and `totals`. The fallback router reserves lunch after the job nearest 11:30.
@@ -300,6 +301,7 @@ class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[s
                                                        # back_first, back_last}], sites [{label, kind, trucks per crew, jobs}],
                                                        # triage_model, today/later/deferred + decisions with reasons,
                                                        # unassigned with reasons, note (Nemotron); None = no plan yet
+    updating: bool = False                             # GET only: a newer report is queued or being written (poll fast)
 class ReportIssue:          id, category, severity, severity_reason, description, name (current), video_id, drive, t, lat, lon,
                             place (nearest street), sightings, confidence, deadline ("today"|"this week"|"this month"|
                             "routine"), crew, repair, minutes
@@ -349,7 +351,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | `GET /api/geocode?q=` | `{lat, lon, label}` for an address in Toronto (OSM Nominatim, 1 request a second, cached); 404 no match |
 | `GET /api/hazards` | `Hazard[]`: city road restrictions plus dashcam work zones near bases and open jobs |
 | `POST /api/directions` `{origin, destination}` | `Directions`: road path around closures |
-| `GET /api/health` | `{ok, store_source}` |
+| `GET /api/health` | `{ok, store_source, demo_curation}` |
 | `POST /api/admin/precompute/start`, `/stop`; `POST /api/admin/reset` | Admin only, not in the UI. Reset hides uploads made before it (the cutoff is kept in the local snapshot) |
 | `POST /api/admin/explanations/regenerate` `{video_ids?, only_template = true}`, `GET /api/admin/explanations/status` | Admin only. Rewrites drive summaries inside the API, one drive at a time (Weave-traced): Nemotron gets grounded facts (streets from OSRM, times, counts against the fleet average, the worst findings) and its summary is checked (no template wording or "This video…" opener, a street and a time named, under 50% trigram overlap with other drives) and retried once; else a fact-built summary marked `template`. Results go to `state/explanations.json` and are served on `/api/videos` |
 | `GET`/`POST /api/admin/demo` `{on: bool}` | Admin only. Demo mode (off by default; `DEMO_CURATION=1` at start): issues carry `featured` ranks from `backend/app/curation.json`, reviewed false positives are hidden from issues, report, dispatch and hazards, and `/api/videos` lists only uploads, running jobs and drives holding a pick. Off, every endpoint serves the pipeline's data untouched. The choice persists in `state/demo_curation.json` |
@@ -402,7 +404,7 @@ The cuOpt toy request is done the night before.
 
 ## 8. Open questions and decisions
 - Everything marked **Verify on the day** is in the gate checks (section 6).
-- Crew bases: real City transfer stations for sanitation. Works yards for the other crews are assumed points, labelled as such (`facilities.json`).
+- Crew bases: 20 City of Toronto sites; 5 assumed points, labelled as such (`facilities.json`).
 - The final category list, after testing Cosmos on real segments.
 - **For the user to decide:** whether the replay fallback (section 7) is acceptable, provided we say when it's used.
 

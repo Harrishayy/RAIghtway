@@ -43,10 +43,12 @@ Context compiled 2026-10-16 from the event page, Luma, the official Build Day gu
 - Brian Verkley, Director, AI Data Platform, VAST Data
 - Junaid Butt, AI Solutions Engineer, Weights & Biases
 
-### Judging criteria (from the VAST Builders Challenge blog)
-1. **Creativity**
-2. **Technical implementation**
-3. **Real-world impact**
+### Judging criteria (from the event slides, `Builders_Challenge_Slides.pdf`)
+1. **Idea**: a compelling use of the provided video search and summary stack.
+2. **Design**: a well thought out, intuitive project design and user experience.
+3. **Technical implementation**: high-quality software that is easy to follow, reproduce and evaluate, with clear documentation of inputs, outputs and evaluation steps.
+4. **Impact**: effective use of at least 3 sponsor tools.
+5. **Presentation**: a 2-minute live demo (demos over slides). The top 5 give a 3-minute demo to everyone at 6 pm.
 
 There is a first round of judging with each team, covering what you built and how the day went, followed by demos to the panel. The guide says a winning story follows this pattern: *problem → video archive (one of the packs) → search/filters across cameras → insight or action*.
 

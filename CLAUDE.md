@@ -4,7 +4,7 @@ Raightway turns fleet dashcam footage into city maintenance work. The pipeline:
 
 1. Find issues in 5 s pieces (NVIDIA Cosmos3-Reason on CoreWeave GPUs).
 2. Box each one (Cosmos3-Reason) and embed its crop (Cosmos-Embed1).
-3. Place it on the map (PIE GPS) and dedupe against history (VastDB vector search; records in VastDB, frames in VAST S3).
+3. Place it on the map (PIE GPS) and dedupe against history (same category within 35 m; records in VastDB, frames in VAST S3). The crop vectors power similar issues (VastDB vector search), not the merge: `DEDUPE_MODE = "distance"` in `backend/app/pipeline/dedupe.py`.
 4. Write work orders and a report (Nemotron on W&B Inference, traced and evaluated in W&B Weave).
 5. Route crews from their bases around road closures (NVIDIA cuOpt, OSRM road times).
 
@@ -44,7 +44,7 @@ package.json       root shortcuts: pnpm dev | dev:mock | check | backend:status|
 | NVIDIA | Cosmos3-Reason (find, box), Cosmos-Embed1 (vectors), Nemotron Lightning / Ultra / Super-VL, cuOpt (routing) |
 | CoreWeave | The shared GPU endpoints serving the Cosmos models (provided; we don't deploy them) |
 | W&B | W&B Inference for Nemotron; Weave traces on every model op; Weave Evaluations (`scripts/weave_eval.py`) |
-| VAST | VastDB tables (schema `citymaint`), VastDB vector SQL over ADBC (dedupe, similar issues), VAST S3 frames, the VSS index (inventory from `vss-collection`, semantic search, clip download) |
+| VAST | VastDB tables (schema `citymaint`), VastDB vector SQL over ADBC (similar issues), VAST S3 frames and Run footage, the VSS index (inventory from `vss-collection`, footage search, Ask captions, clip download) |
 
 Every one of these has a fallback, so the UI and the logs must say which path answered (`backend/CLAUDE.md`, "Sponsor integrations"). Never present a fallback as the sponsor service.
 

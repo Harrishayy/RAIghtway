@@ -26,20 +26,24 @@ app/main.py            routes (§5); imports teammate modules lazily, so a broke
 app/models.py          the contract (§4) + internal *Record types that never reach the UI
 app/store.py           thread-safe in-memory state, atomic state/snapshot.json, ordered background VastDB writes
 app/config.py          env + /config loading; redact() for every logged error
-app/ai/                cosmos.py (find, box) · embed.py (Cosmos-Embed1) · nemotron.py (W&B Inference) ·
+app/ai/                cosmos.py (find, box, rate) · rating.py (severity re-grading) · summaries.py (drive summaries,
+                       search answers) · embed.py (Cosmos-Embed1) · nemotron.py (W&B Inference) ·
                        prompts.py (prompts, crew/urgency rules, JSON extraction) · gpu.py (shared semaphore, pause) ·
                        weave_setup.py (tracing) · gatecheck.py (VM smoke tests)
 app/vast/              db.py (VastDB tables, insert-only) · vector.py (ADBC cosine SQL + numpy fallback) ·
                        media.py (frames in VAST S3, or the frames table) · gatecheck.py
 app/pipeline/          piece.py (one 5 s piece → Detections) · dedupe.py (in-clip, then history) · live.py (uploads) ·
                        precompute.py (corpus sample) · run.py (Run: unseen VAST footage, live) ·
-                       segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py ·
+                       segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py · topic_search.py (/api/search) ·
+                       ask.py (Ask about this drive) ·
                        manual.py (operator-marked issues, pins, names and operator grades: overlay rows, never deduped)
-app/geo/               gps.py (PIE 1 Hz GPS) · inventory.py (segment → drive, t) · demo.py · roads.py (OSRM) · distance.py
+app/geo/               gps.py (PIE 1 Hz GPS) · inventory.py (segment → drive, t) · demo.py · roads.py (OSRM) · distance.py ·
+                       geocode.py
 app/planning/          dispatch.py (sites → triage → multi-day cuOpt round trips) · triage.py (Nemotron day plan) ·
                        recommend.py (Nemotron + cuOpt workforce scenarios) · zones.py/zones_wards.json (wards, drawn
                        areas) · cuopt.py · report.py · hazards.py (city closures + dashcam work zones) · paths.py
-                       (detours) · facilities.py/.json (21 City sites; edits in state/facilities.json)
+                       (detours) · facilities.py/.json (25 sites, 5 `assumed`; edits in state/facilities.json) · fill_paths.py
+                       (road paths drawn after a plan returns)
 tests/                 pytest, offline
 ../scripts/            one-off jobs, run from backend/ with the VM venv (see "Scripts")
 ```
@@ -54,7 +58,7 @@ Each integration has a fallback so the demo never stops. The flip side is that a
 | **Cosmos3-Reason severity rating** | `ai/cosmos.py` `rate`, `ai/rating.py` | re-grade each finding from its boxed keyframe + close-up: severity, one-sentence reason, verdict (rejected = not a defect) | Nemotron Super-VL (one image), then the find grade | `Issue.severity_model`; log `Rate: N/M rated cosmos3-reason=…`; Weave `rate` traces; the report's provenance |
 | **Cosmos-Embed1** | `ai/embed.py` | one 256-d vector per issue crop (1 s still clip) | raises; the pipeline keeps the issue without a vector | `has_embedding = 1` rows |
 | **VastDB** | `vast/db.py` | system of record in schema `citymaint` (videos, issues, gps, reports, plans, frames) | `state/snapshot.json` | `GET /api/health` → `store_source` |
-| **VastDB vector search** | `vast/vector.py` | dedupe (category + 35 m box) and similar issues | in-memory numpy cosine for 60 s after any ADBC error | log `vector.nearest path=adbc`; the similar-issues API returns `search: "vastdb"` and the issue card shows it |
+| **VastDB vector search** | `vast/vector.py` | similar issues. Dedupe runs in `DEDUPE_MODE = "distance"` (category + 35 m, in memory; crop similarity didn't separate same from different defects), so it doesn't call this; vector mode is kept but off | in-memory numpy cosine for 60 s after any ADBC error | log `vector.nearest path=adbc` (from `/similar` only); the similar-issues API returns `search: "vastdb"` and the issue card shows it |
 | **VAST S3** | `vast/media.py`, `pipeline/run.py` | keyframes (`citymaint/frames/`), uploaded originals; Run downloads its segments from here | `MEDIA_MODE=vastdb` (frames table) | frame served when the disk cache is empty |
 | **VSS API** (VAST DataEngine index) | `pipeline/vss_client.py`, `pipeline/topic_search.py` | `POST /api/search` (the console's footage search, mapped onto drives via the inventory); semantic search hits that widen the precompute sample; clip download; `scripts/build_inventory.py` reads `vss-collection` | none for `/api/search` (503); precompute extras skipped | `/api/search` returns `search: "vss"`; log `VSS topic search '…': N segments -> M bands`. Warm demo queries with `scripts/warm_vss.py` |
 | **Nemotron on W&B Inference** | `ai/nemotron.py`, `ai/summaries.py`, `pipeline/ask.py` | work orders (Lightning), report (Ultra, then Lightning), box fallback (Super-VL); grounded, checked drive summaries; the answer to a footage search; "Ask about this drive" over VSS captions | template work orders / report; a fact-built summary marked `explanation_source: "template"`; no search answer (VSS synthesis shown); Ask quotes the nearest VSS caption (`source: "vss"`) | Weave trace `nemotron_json` with the text prompt and parsed reply (schema `DriveSummary`, `SearchAnswer`, `AskReply`); `/api/videos` `explanation_source`; logs `Drive summary for …: nemotron`, `Ask … -> nemotron`. Lightning reasons for 750–4000+ tokens before answering: summaries keep reasoning with an 8192-token budget; chat (Ask) and search answers pass `think=False` (`chat_template_kwargs.enable_thinking=false`, about 1 s, verified on W&B Inference). Chat never uses Ultra |
@@ -95,6 +99,7 @@ Gate checks on the VM exercise each of these: `python -m app.ai.gatecheck --help
 | `warm_vss.py` | runs the demo footage queries through VSS one at a time, so `/api/search` answers them from the cache; prints what each finds |
 | `rate_severity.py` | re-grades every stored issue's severity from its keyframe (Cosmos3-Reason, Nemotron Super-VL fallback) into `state/ratings.jsonl` + the VastDB `ratings` table; the API can stay up, restart it after to load them. `--eval ../scripts/severity_labels.json` checks the rater against hand labels; `--revert` undoes |
 | `weave_eval.py` | Weave Evaluations: `orders --limit 20` (no labels needed), `find --labels <jsonl>` |
+| `build_video_proxies.py` | 480p playable proxies of corpus drives, served by `GET /api/videos/{id}/file` |
 
 ## Before you finish
 

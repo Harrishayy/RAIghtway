@@ -13,7 +13,7 @@ When two sources disagree, use the first one in this list:
 
 ## What has changed since the briefs
 
-- **Tests exist now.** The "no tests" ground rule in `README.md` is superseded. The backend has offline pytest (`backend/tests/`) and the frontend has vitest in `packages/core/test/`. Both must pass before you finish.
+- **Tests exist now.** The "no tests" ground rule in `agents/README.md` is superseded. The backend has offline pytest (`backend/tests/`) and the frontend has vitest in `packages/core/test/`. Both must pass before you finish.
 - **Dispatch grew** beyond the brief in `07_report_and_dispatch.md`: per-category bases (`facilities.json`), OSRM road travel times, City of Toronto road closures, detours, and crew run sheets. See `backend/app/planning/` and the optional `Route`/`Plan` fields in §4.
 - **Corpus issues came from a standalone Cosmos sweep** (`scripts/import_sweep.py`), not only the precompute loop in `06_precompute.md`.
 - **Similar issues return `SimilarIssue`** (`distance`, and `search`: `vastdb` or `local`), not plain `Issue[]`.
