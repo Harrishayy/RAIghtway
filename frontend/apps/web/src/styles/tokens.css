@@ -1,0 +1,41 @@
+/* Design tokens. One block per direction; components use only these variables.
+   Swap the look by setting data-dir on <html>. Generated from the design-directions page. */
+:root,[data-dir="survey"]{
+  /* A · Survey — the inspector's clipboard */
+  --bg:#ECEEE9;--surface:#F8F8F5;--surface-2:#E1E4DC;--ink:#16212B;--ink-2:#55606B;--line:#C8CDC3;--line-strong:#16212B;
+  --accent:#C81D63;--accent-ink:#FFFFFF;--accent-soft:#F8DCE7;--accent-text:#B3175A;--focus:#C81D63;--sun:#F2C230;
+  --ok:#2B6E45;--hold:#A14E00;--info:#1E5A9E;--bad:#A8261E;--neutral:#55606B;
+  --sev-1:#E3A88D;--sev-2:#DD8364;--sev-3:#D55B40;--sev-4:#C13429;--sev-5:#A21921;--on-sev-lo:#3A1A10;--on-sev-hi:#FFFFFF;
+  --c-graffiti:#6250D6;--c-markings:#1BAF7A;--c-workzone:#EB6834;--c-pavement:#2A78D6;--c-signage:#E87BA4;--c-waste:#008300;
+  --map-ground:#E4E7E1;--map-block:#F1F2EE;--map-street:#FFFFFF;--map-casing:#C9CEC6;--map-water:#CBDDE5;--map-park:#D3E3D0;--map-label:#6A747C;
+  --font-d:var(--ff-barlow),'Arial Narrow',system-ui,sans-serif;--font-b:var(--ff-public),system-ui,sans-serif;--font-m:var(--ff-plex-mono),ui-monospace,Menlo,monospace;
+  --r:4px;--r-lg:6px;--bw:1px;--shadow:none;
+  --m-body:#EE6A24;--m-band:#F8F8F5;--m-base:#16212B;--m-eye:#16212B;--m-cheek:#F6A07C;--m-prop:#C81D63;
+  color-scheme:light;
+}
+[data-dir="night"]{
+  /* B · Night Shift — the depot before dawn */
+  --bg:#0C1013;--surface:#13191E;--surface-2:#1A2229;--ink:#ECE6D9;--ink-2:#929DA8;--line:#252F38;--line-strong:#42505D;
+  --accent:#FFB547;--accent-ink:#1A1100;--accent-soft:rgba(255,181,71,.12);--accent-text:#FFB547;--focus:#FFB547;--sun:#FFB547;
+  --ok:#52D39B;--hold:#FF8B4D;--info:#74A9FF;--bad:#FF5E6A;--neutral:#929DA8;
+  --sev-1:#744D3C;--sev-2:#9C563D;--sev-3:#C55C43;--sev-4:#E9644F;--sev-5:#FF7867;--on-sev-lo:#FFFFFF;--on-sev-hi:#1A0B07;
+  --c-graffiti:#9085E9;--c-markings:#199E70;--c-workzone:#D95926;--c-pavement:#3987E5;--c-signage:#D55181;--c-waste:#2E9E3A;
+  --map-ground:#0E1316;--map-block:#141A1E;--map-street:#232B32;--map-casing:#090C0E;--map-water:#0B1820;--map-park:#122019;--map-label:#717D88;
+  --font-d:var(--ff-chivo),system-ui,sans-serif;--font-b:var(--ff-instrument),system-ui,sans-serif;--font-m:var(--ff-chivo-mono),ui-monospace,Menlo,monospace;
+  --r:6px;--r-lg:10px;--bw:1px;--shadow:0 14px 34px rgba(0,0,0,.38);
+  --m-body:#E2581C;--m-band:#F3EFE4;--m-base:#2A3038;--m-eye:#1A1100;--m-cheek:#FF9B6B;--m-prop:#FFB547;
+  color-scheme:dark;
+}
+[data-dir="paint"]{
+  /* C · Fresh Paint — new lines on the road */
+  --bg:#F3F2EE;--surface:#FFFFFF;--surface-2:#EAE8E1;--ink:#1B1D21;--ink-2:#53575E;--line:#D3D1C9;--line-strong:#1B1D21;
+  --accent:#FFC61A;--accent-ink:#1B1D21;--accent-soft:#FFF1C2;--accent-text:#7A5600;--focus:#1B1D21;--sun:#FFC61A;
+  --ok:#0E8A5A;--hold:#C9520F;--info:#2459D6;--bad:#D23439;--neutral:#53575E;
+  --sev-1:#E3A88D;--sev-2:#DD8364;--sev-3:#D55B40;--sev-4:#C13429;--sev-5:#A21921;--on-sev-lo:#3A1A10;--on-sev-hi:#FFFFFF;
+  --c-graffiti:#6250D6;--c-markings:#1BAF7A;--c-workzone:#EB6834;--c-pavement:#2A78D6;--c-signage:#E87BA4;--c-waste:#008300;
+  --map-ground:#E9E8E3;--map-block:#F6F5F1;--map-street:#FFFFFF;--map-casing:#1B1D21;--map-water:#C7DCEA;--map-park:#D4E6CF;--map-label:#5C6067;
+  --font-d:var(--ff-familjen),system-ui,sans-serif;--font-b:var(--ff-hanken),system-ui,sans-serif;--font-m:var(--ff-redhat-mono),ui-monospace,Menlo,monospace;
+  --r:12px;--r-lg:18px;--bw:2px;--shadow:3px 3px 0 #1B1D21;
+  --m-body:#F26A1E;--m-band:#FFFFFF;--m-base:#1B1D21;--m-eye:#1B1D21;--m-cheek:#FFB08A;--m-prop:#FFC61A;
+  color-scheme:light;
+}
