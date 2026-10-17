@@ -5,9 +5,8 @@ contiguous segments of one drive that no earlier pass analysed, downloads them f
 into one clip and hands it to the live pipeline, the same path an upload takes. The console shows the
 stages and provisional pins as they land.
 
-"Analysed" means: in the imported Cosmos sweep (minus the demo segments held back from it), done by
-precompute, or done by an earlier Run. Held-back demo segments are picked first, so the first Run on
-stage is the demo street, whose findings merge into pins another drive already found.
+"Analysed" means: in the imported Cosmos sweep, done by precompute, or done by an earlier Run. When nothing
+is new, Run re-checks the stretches around the worst open issues instead.
 """
 import asyncio
 import json
@@ -20,12 +19,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app import config, store
-from app.geo import demo, gps, inventory
+from app.geo import gps, inventory
 from app.models import VideoRecord
 from app.pipeline import precompute
 
 log = logging.getLogger(__name__)
-MAX_SEGMENTS = 6                      # 30 s of footage: enough to see pins land, short enough for a demo
+MAX_SEGMENTS = 6                      # 30 s of footage: enough to see pins land, short enough to watch
 RECHECK_LEAD_S = 10.0                 # a re-check starts this far before the reviewed finding
 REFRESH_TIMEOUT_S = 45.0
 FFMPEG_TIMEOUT_S = 120
@@ -78,18 +77,17 @@ def _mark_done(segment_ids: list[str]) -> None:
 
 
 def analysed() -> set[str]:
-    held_back = demo.excluded_segments()
-    return (_sweep_ids() - held_back) | precompute._load_done() | _run_done()
+    return _sweep_ids() | precompute._load_done() | _run_done()
 
 
 def pick(max_segments: int = MAX_SEGMENTS) -> list[inventory.Segment]:
-    """The next unanalysed stretch: held-back demo segments first, then any new ones, contiguous on one drive."""
-    seen, held_back = analysed(), demo.excluded_segments()
+    """The next unanalysed stretch, contiguous on one drive."""
+    seen = analysed()
     segments = inventory.load()
     pending = [s for s in segments if s.segment_id not in seen and s.moving is not False]
     if not pending:
         raise NothingToRun("Nothing new in the VAST index: every segment has been analysed")
-    first = min(pending, key=lambda s: (s.segment_id not in held_back, s.drive, s.t_start))
+    first = min(pending, key=lambda s: (s.drive, s.t_start))
     stretch, end = [first], first.t_start + first.duration
     for s in sorted((s for s in pending if s.drive == first.drive and s.t_start > first.t_start),
                     key=lambda s: s.t_start):
@@ -101,7 +99,7 @@ def pick(max_segments: int = MAX_SEGMENTS) -> list[inventory.Segment]:
 
 
 def _join(parts: list[str], out: str) -> None:
-    """Concatenate the segments and re-encode to 720p, like the demo clips."""
+    """Concatenate the segments and re-encode to 720p."""
     listing = Path(out).with_suffix(".txt")
     listing.write_text("".join(f"file '{p}'\n" for p in parts))
     try:
@@ -131,18 +129,18 @@ def _fetch(stretch: list[inventory.Segment], out: str) -> None:
 
 
 def rechecks(count: int, skip_drives: set[str], max_segments: int = MAX_SEGMENTS) -> list[list[inventory.Segment]]:
-    """Stretches of already-analysed footage to look at again: around the reviewed demo picks
-    (app/curation.json, best first), one per drive, skipping `skip_drives`."""
+    """Stretches of already-analysed footage to look at again: around the worst open corpus issues (severity,
+    then confidence), one per drive, skipping `skip_drives`."""
     if count <= 0:
         return []
-    from app import curation
     by_drive: dict[str, list[inventory.Segment]] = {}
     for s in inventory.load():
         by_drive.setdefault(s.drive, []).append(s)
     out: list[list[inventory.Segment]] = []
-    for issue_id, _ in sorted(curation._load()[0].items(), key=lambda kv: kv[1]):
-        issue = store.get_issue(issue_id)
-        video = issue and store.get_video(issue.video_id)
+    worst = sorted((i for i in store.canonical_issues() if i.source == "corpus" and i.verdict != "rejected"),
+                   key=lambda i: (-i.severity, -i.confidence))
+    for issue in worst:
+        video = store.get_video(issue.video_id)
         if not video or video.source != "corpus" or not video.drive or video.drive in skip_drives:
             continue
         at = video.start_s + issue.t - RECHECK_LEAD_S       # start a little before the finding
@@ -163,11 +161,11 @@ def rechecks(count: int, skip_drives: set[str], max_segments: int = MAX_SEGMENTS
 
 async def start(analyse, clips: int | None = None):
     """Pick and register one Run of up to `clips` clips (default RUN_CLIPS): the next unanalysed stretch if
-    there is one, then re-checks of analysed demo stretches on other drives. All are registered at once
+    there is one, then re-checks of the worst open issues' stretches on other drives. All are registered at once
     (queued), then `go()` fetches and analyses them one after another, so each runs at full speed.
 
     Re-checks are registered as uploads: they dedupe against corpus history (their findings land as
-    re-sightings) but never become history themselves, and an admin reset hides them after rehearsals.
+    re-sightings) but never become history themselves, and an admin reset hides them.
     Returns (first video, go). Raises NothingToRun only when there is nothing at all to look at."""
     global _active
     if _lock.locked():

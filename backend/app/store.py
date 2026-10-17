@@ -60,7 +60,7 @@ def _enqueue(name: str, value) -> None:
 
 
 def _snapshot() -> None:
-    """Called under _lock; fixtures and live/provisional records are excluded."""
+    """Called under _lock; live/provisional records are excluded."""
     path = Path(config.STATE_DIR) / "snapshot.json"
     temporary = None
     try:
@@ -636,12 +636,3 @@ def reset() -> datetime:
         _report, _plan = None, None
         _snapshot()
         return _cutoff
-
-
-def seed_memory(videos: list[VideoRecord], issues: list[IssueRecord]) -> None:
-    """Development fixtures only: never snapshot, enqueue, or index these records."""
-    with _lock:
-        if _videos or _issues:
-            return
-        _videos.update((v.id, v.model_copy(deep=True)) for v in videos)
-        _issues.update((i.id, i.model_copy(deep=True)) for i in issues)

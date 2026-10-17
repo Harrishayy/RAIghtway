@@ -27,10 +27,6 @@ from app.models import (CREW_FOR, IssueRecord, Report, ReportCount, ReportCrewPl
                         ReportPlanDay, ReportProvenance, ReportSection, ReportSite, ReportStats, ReportTriageItem)
 
 log = logging.getLogger(__name__)
-try:
-    from app import curation          # demo mode hides hand-reviewed false positives from console views
-except Exception:                     # pragma: no cover - older deployments without demo mode
-    curation = None
 SHIFT_MIN = 480
 OVERHEAD = 1.3                       # travel and setup on top of work-order minutes
 DEBOUNCE_S = 60.0
@@ -90,10 +86,6 @@ class _ReportReply(BaseModel):
     sections: dict[str, str] = {}
     hotspots: dict[str, str] = {}
     crew_plan: str = ""
-
-
-def _visible(issues: list[IssueRecord]) -> list[IssueRecord]:
-    return curation.visible(issues) if curation is not None else issues
 
 
 def _minutes(issue: IssueRecord) -> int:
@@ -447,7 +439,7 @@ async def _nemotron(facts: dict) -> tuple[_ReportReply | None, str]:
 
 async def regenerate() -> Report:
     """Build a fresh report from the canonical issues. Never raises on model failure."""
-    canonical = await asyncio.to_thread(lambda: _visible(store.canonical_issues()))
+    canonical = await asyncio.to_thread(store.canonical_issues)
     sightings = await asyncio.to_thread(store.all_issues)
     videos = await asyncio.to_thread(store.list_videos)
     drives = {v.id: v.drive or v.filename for v in videos}

@@ -24,10 +24,10 @@ export function ReviewDesk() {
   const { videoId, t, selectedIssue, open, select } = usePlayback();
   const mapView = useUi(s => s.mapView); const setMapView = useUi(s => s.setMapView);
   const rightPane = useUi(s => s.rightPane); const setRightPane = useUi(s => s.setRightPane);
-  // once data arrives, open on the best demo pick from the footage review, else the first finished drive
+  // once data arrives, open on the worst open finding in the city, else the first finished drive
   useEffect(() => {
     if (videoId || !videos.data?.length) return;
-    const pick = landingIssue((allIssues.data ?? []).filter(i => i.featured != null && cats.includes(i.category)));
+    const pick = landingIssue((allIssues.data ?? []).filter(i => cats.includes(i.category) && i.verdict !== 'rejected'));
     if (pick && videos.data.some(v => v.id === pick.video_id)) { open(pick.video_id, Math.max(0, pick.t - 0.4), pick.id); return; }
     if (allIssues.isPending) return;
     const v = videos.data.find(x => x.status === 'done') ?? videos.data[0]!; open(v.id);
@@ -35,7 +35,7 @@ export function ReviewDesk() {
   const detail = useVideo(videoId);
   const video = detail.data?.video ?? videos.data?.find(v => v.id === videoId);
   const issues = useMemo(() => (detail.data?.issues ?? []).filter(i => cats.includes(i.category)).sort(byTime), [detail.data, cats]);
-  // land on the drive's best demo pick, else its first finding, rather than an empty road
+  // land on the drive's worst finding rather than an empty road
   useEffect(() => { const first = landingIssue(issues); if (!selectedIssue && first && detail.data?.video.id === videoId) { select(first.id); if (usePlayback.getState().t === 0) usePlayback.getState().seek(Math.max(0, first.t - 0.4)); } }, [selectedIssue, issues, select, detail.data, videoId]);
   const pool = useMemo(() => { const m = new Map<string, Issue>(); (allIssues.data ?? []).forEach(i => m.set(i.id, i)); issues.forEach(i => m.set(i.id, i)); return m; }, [allIssues.data, issues]);
   const selected = selectedIssue ? pool.get(selectedIssue) : null;

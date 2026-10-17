@@ -2,12 +2,11 @@
 // Every issue, grouped by category. Filters, all visible at once: issue-type chips with counts (they follow the
 // top-bar preset until used), the rating verdict (confirmed by default; rejected = judged not a defect), search,
 // and severity per group: the chips in a group's header toggle levels for that group only, "Min severity" sets
-// every group at once. Each group sorts demo picks first, then severity, then confidence. The map and the card
+// every group at once. Each group sorts by severity, then confidence. The map and the card
 // follow the selection.
 import { useMemo, useState } from 'react';
 import { CATEGORY, CATEGORIES, SEVERITY, issueLabel, severityDef, type CategoryId, type Issue, type Severity } from '@raightway/core';
 import { useIssues } from '@/domain/queries';
-import { pickRank } from '@/domain/derive';
 import { usePlayback } from '@/state/playback';
 import { useCategories } from '@/state/ui';
 import { MapView } from '@/features/map/MapView';
@@ -26,7 +25,7 @@ const atLeast = (n: number) => new Set<Severity>(LEVELS.filter(l => l >= n));
 const sameSet = (a: Set<Severity>, b: Set<Severity>) => a.size === b.size && [...a].every(x => b.has(x));
 
 const SORTS: Record<Sort, (a: Issue, b: Issue) => number> = {
-  severity: (a, b) => pickRank(a) - pickRank(b) || b.severity - a.severity || b.confidence - a.confidence,
+  severity: (a, b) => b.severity - a.severity || b.confidence - a.confidence,
   confidence: (a, b) => b.confidence - a.confidence || b.severity - a.severity,
   sightings: (a, b) => b.sightings - a.sightings || b.severity - a.severity,
 };
@@ -138,7 +137,7 @@ export function IssuesView() {
                       <tr key={i.id} aria-selected={i.id === sel?.id} tabIndex={0} onClick={() => select(i.id)} onKeyDown={e => { if (e.key === 'Enter') select(i.id); }} className={[i.provisional ? 'prov' : '', i.verdict === 'rejected' ? 'rejected' : ''].join(' ').trim() || undefined}>
                         <td><SevDot level={i.severity} /></td>
                         <td className="d" title={[i.name, i.description, i.severity_reason, i.place].filter(Boolean).join(' · ')}>
-                          <span className="two"><b>{i.featured ? <span className="pick" title="Demo pick">#{i.featured}</span> : null}{issueLabel(i)}</b>
+                          <span className="two"><b>{issueLabel(i)}</b>
                             <span className="muted">{i.source === 'manual' ? <Chip tone="neutral" plain>Manual</Chip> : null}{i.pinned ? <Chip tone="info" plain>Pinned</Chip> : null}{i.verdict === 'rejected' ? <Chip tone="neutral" plain>Not a defect</Chip> : null}{i.severity_reason ?? i.place ?? i.id}</span></span>
                         </td>
                         <td className="num seen-c">{i.sightings}×</td><td className="num seen-c" title={i.source === 'manual' ? 'Operator-reported: no model confidence' : undefined}>{i.source === 'manual' ? '—' : `${Math.round(i.confidence * 100)}%`}</td>

@@ -46,7 +46,7 @@ async def _request(content: list[dict]) -> str:
         response = await gpu.client().post(config.COSMOS3_REASON_URL.rstrip("/") + "/v1/chat/completions",
             json={"model": config.COSMOS3_REASON_MODEL,
                   "messages": [{"role": "user", "content": content}],
-                  "temperature": 0.0, "max_tokens": 1000})   # 0: rehearsal and live demo see the same findings
+                  "temperature": 0.0, "max_tokens": 1000})   # 0: repeated runs on a clip see the same findings
         response.raise_for_status()
     message = response.json()["choices"][0]["message"]
     content = message.get("content")

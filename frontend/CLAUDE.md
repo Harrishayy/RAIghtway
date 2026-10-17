@@ -57,7 +57,7 @@ styles/                       tokens.css → components.css → app.css
 
 ## Show the sponsor tech; never fake it
 
-The demo is judged by VAST, NVIDIA and W&B people, and every backend integration has a silent fallback. The console says which path answered:
+Every backend integration has a silent fallback. The console says which path answered:
 
 - Dispatch prints `cuOpt` or `Fallback routing`, the solve time and `street times` when the matrix came from roads (`Plan.solver`, `solve_ms`, `matrix_source`).
 - The issue card's "Similar issues" label says `VastDB vector search` or `local index` (`Similar.search`), and each row shows its embedding distance.

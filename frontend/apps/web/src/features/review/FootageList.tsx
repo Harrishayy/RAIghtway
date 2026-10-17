@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { CATEGORY, fmtClock, issueLabel, type Issue, type TopicHit, type Video } from '@raightway/core';
-import { landingIssue, pickRank } from '@/domain/derive';
+import { CATEGORY, fmtClock, type Issue, type TopicHit, type Video } from '@raightway/core';
+import { landingIssue } from '@/domain/derive';
 import { useClient } from '@/domain/client';
 import { useIssues, useVideos } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
@@ -16,7 +16,7 @@ import { FootageSearch, loggedIn, useFootageSearch } from './FootageSearch';
 const isLive = (v: Video) => v.status === 'analysing' || v.status === 'queued';
 
 /** One row per piece of footage: repeat uploads of the same file collapse into their newest run. */
-interface Row { v: Video; runs: Video[]; issues: Issue[]; pick: number }
+interface Row { v: Video; runs: Video[]; issues: Issue[] }
 
 export function FootageList() {
   const videos = useVideos(); const issues = useIssues(); const cats = useCategories();
@@ -34,11 +34,11 @@ export function FootageList() {
     [...groups.values()].forEach(runs => {
       const newest = [...runs].reverse(); const v = newest.find(isLive) ?? newest.find(r => r.status === 'done') ?? newest[0]!;
       const own = byVideo.get(v.id) ?? [];
-      out.push({ v, runs, issues: own, pick: Math.min(...own.map(pickRank)), i: (videos.data ?? []).indexOf(runs[runs.length - 1]!) });
+      out.push({ v, runs, issues: own, i: (videos.data ?? []).indexOf(runs[runs.length - 1]!) });
     });
-    // running jobs first, then drives holding the reviewed demo picks (best first), then uploads (newest first), then the corpus
-    const rank = (r: Row) => (isLive(r.v) ? 0 : r.pick < Infinity ? 1 : r.v.source === 'upload' ? 2 : 3);
-    return out.sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? a.pick - b.pick : rank(a) === 2 ? b.i - a.i : a.i - b.i));
+    // running jobs first, then uploads and runs (newest first), then the corpus
+    const rank = (r: Row) => (isLive(r.v) ? 0 : r.v.source === 'upload' ? 1 : 2);
+    return out.sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? b.i - a.i : a.i - b.i));
   }, [videos.data, byVideo]);
   // while a search has answered, only drives with matches, the best match first
   const searched = hits ? rows.filter(r => found.has(r.v.id)).sort((a, b) => hits.indexOf(found.get(a.v.id)![0]!) - hits.indexOf(found.get(b.v.id)![0]!)) : rows;
@@ -62,11 +62,9 @@ export function FootageList() {
   );
 }
 
-/** The row's one-line headline: the best demo pick, the drive summary's first sentence, else the file name.
+/** The row's one-line headline: the drive summary's first sentence, else the file name.
  *  `template` marks a summary Nemotron didn't write (the backend's fact-built stand-in). */
-function headline(v: Video, issues: Issue[]): { text: string; template: boolean } {
-  const pick = landingIssue(issues.filter(i => i.featured != null));
-  if (pick) return { text: issueLabel(pick), template: false };
+function headline(v: Video): { text: string; template: boolean } {
   const text = (v.explanation ?? '').replace(/\*\*/g, '').trim();
   // the old template ("This video contains N recorded maintenance findings: …") says less than the counts below
   if (!text || /^this video contains/i.test(text)) return { text: v.filename, template: false };
@@ -76,7 +74,7 @@ function headline(v: Video, issues: Issue[]): { text: string; template: boolean 
 function VideoRow({ row: { v, runs, issues }, hits, current, t, onOpen }: { row: Row; hits?: TopicHit[]; current: boolean; t: number; onOpen: () => void }) {
   const hz = issues.filter(i => i.severity === 5 && !i.duplicate_of).length; const live = isLive(v);
   // during a search the row says what VSS saw at its best match
-  const head = headline(v, issues); const where = hits?.[0] ? `${fmtClock(hits[0].start)} · ${hits[0].caption}` : head.text;
+  const head = headline(v); const where = hits?.[0] ? `${fmtClock(hits[0].start)} · ${hits[0].caption}` : head.text;
   const logged = hits ? hits.filter(h => loggedIn(h, issues).length).length : 0;
   return (
     <button type="button" className={`vrow${live ? ' live' : ''}`} aria-current={current} onClick={onOpen}>

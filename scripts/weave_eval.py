@@ -1,4 +1,4 @@
-"""Weave Evaluations for the two model steps the demo leans on. Results land in the W&B project.
+"""Weave Evaluations for the two model steps the pipeline leans on. Results land in the W&B project.
 
     orders  Nemotron work orders on canonical issues from state/snapshot.json. Scores: the reply covers
             the issue, minutes are plausible for the category, equipment is listed. No labels needed.

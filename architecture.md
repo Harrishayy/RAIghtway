@@ -13,7 +13,7 @@ Environment facts were checked on 16 Oct against the guide repo, the `vss-bluepr
 |---|---|
 | User | A city operations manager planning tomorrow's maintenance work |
 | Product | Fleet footage → issues found and graded → per-video explanations → map with evidence frames → situation report with recommended crews → cuOpt-optimised crew routes |
-| Demo | *As built (17 Oct): 2 minutes, scripted in `README.md` "Demo"; Run replaced the upload.* Planned: about **1 minute**: populated map (from yesterday's fleet footage) → drop in a new clip and watch it analyse live → click an issue to see the frame with a bounding box → report → dispatch, with routes appearing on the map |
+| Demo | *As built (17 Oct): Run replaced the upload; no staged clip, demo mode or held-back footage remains in the code.* Planned: about **1 minute**: populated map (from yesterday's fleet footage) → drop in a new clip and watch it analyse live → click an issue to see the frame with a bounding box → report → dispatch, with routes appearing on the map |
 | VAST usage | **Level 1:** VAST S3 for all media; VastDB tables as the system of record. **Level 2:** VastDB vector search over issue embeddings (similar issues, deduplication) |
 | Live analysis | Our own pipeline calling the models directly; results stored in VAST. The guide limits the challenge path to re-ingesting the already-segmented corpus, and NYC teams saw re-ingest jobs stuck for 40+ min. |
 | Hosting | Runs on the workshop VM, opened through Cursor port forwarding. No Kubernetes. |
@@ -195,7 +195,7 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 - **Small sample, not the whole corpus.** We only need enough footage to prove the point, so pre-compute runs on a **small set of segments spread apart** (about 40–60), not all ~8 hours. That keeps it to a few minutes of GPU time.
 - **Candidates (cap ~60):**
   1. *Spread-apart sample:* moving segments taken at even gaps across every drive (set01–06), e.g. one every 5–10 minutes of driving, so the pins cover the whole city rather than clustering on one street.
-  2. *Demo clips:* never their own segments; always the other drive's segments for the same streets (3.3).
+  2. *Demo clips (removed; as built, every segment is sampled the same way):* never their own segments; always the other drive's segments for the same streets (3.3).
   3. *Optional, only if there's time:* a handful of top hits from VSS search (`POST /api/v1/search`, JWT from `/api/v1/auth/login`, `metadata_filters: {"camera_id": "pie_cam-3"}`, `hybrid_text_weight` about 0.2) to add segments likely to contain issues. Keep it to about 10 extra.
 - **Processing:** download each candidate from its `source` URI with read-only boto3 (if access is denied, use `GET /api/v1/videos/stream?source=…&token=…`), scale to 720p, and run the per-piece steps, dedupe and Nemotron. Group results into "videos" by PIE clip, each with its own explanation.
 - **Budget:** about 50 segments should take a few minutes on the shared GPUs (an estimate; measure with Weave). Only widen the sample if it finishes quickly and the map looks thin.
@@ -261,7 +261,6 @@ class Issue(BaseModel):
     duplicate_of: str | None = None                    # set on re-sightings
     sightings: int = 1                                 # canonical: 1 + re-sightings
     work_order: WorkOrder | None = None                # canonical issues only
-    featured: int | None = None                        # demo rank from backend/app/curation.json, 1 first
     # severity rating pass (backend/app/ai/rating.py), all optional; absent = the find pass's grade
     severity_reason: str | None = None                 # one sentence: what the rater saw, why this grade
     severity_model: str | None = None                  # "cosmos3-reason" | "nemotron-super-vl" (fallback)
@@ -330,7 +329,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | Endpoint | Returns |
 |---|---|
 | `POST /api/videos` (multipart, one file; the UI loops for several) | `Video`; analysis starts |
-| `POST /api/run` `{clips?}` | `Video` (the first clip); re-reads the VAST index and analyses up to `clips` (default `RUN_CLIPS` = 3) 30 s clips live, one after another: the next footage no pass has analysed (held-back demo segments first, `run_kind: "new"`), then re-checks of the reviewed demo stretches on other drives (`run_kind: "recheck"`, registered as uploads so they dedupe against history but never become it, and an admin reset hides them). The rest are listed as queued. 409 only when there is nothing at all to look at |
+| `POST /api/run` `{clips?}` | `Video` (the first clip); re-reads the VAST index and analyses up to `clips` (default `RUN_CLIPS` = 3) 30 s clips live, one after another: the next footage no pass has analysed (`run_kind: "new"`), then re-checks of the stretches around the worst open issues on other drives (`run_kind: "recheck"`, registered as uploads so they dedupe against history but never become it, and an admin reset hides them). The rest are listed as queued. 409 only when there is nothing at all to look at |
 | `GET /api/videos` | `Video[]`, including live progress and stage (polled) |
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |
@@ -351,10 +350,9 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | `GET /api/geocode?q=` | `{lat, lon, label}` for an address in Toronto (OSM Nominatim, 1 request a second, cached); 404 no match |
 | `GET /api/hazards` | `Hazard[]`: city road restrictions plus dashcam work zones near bases and open jobs |
 | `POST /api/directions` `{origin, destination}` | `Directions`: road path around closures |
-| `GET /api/health` | `{ok, store_source, demo_curation}` |
+| `GET /api/health` | `{ok, store_source}` |
 | `POST /api/admin/precompute/start`, `/stop`; `POST /api/admin/reset` | Admin only, not in the UI. Reset hides uploads made before it (the cutoff is kept in the local snapshot) |
 | `POST /api/admin/explanations/regenerate` `{video_ids?, only_template = true}`, `GET /api/admin/explanations/status` | Admin only. Rewrites drive summaries inside the API, one drive at a time (Weave-traced): Nemotron gets grounded facts (streets from OSRM, times, counts against the fleet average, the worst findings) and its summary is checked (no template wording or "This video…" opener, a street and a time named, under 50% trigram overlap with other drives) and retried once; else a fact-built summary marked `template`. Results go to `state/explanations.json` and are served on `/api/videos` |
-| `GET`/`POST /api/admin/demo` `{on: bool}` | Admin only. Demo mode (off by default; `DEMO_CURATION=1` at start): issues carry `featured` ranks from `backend/app/curation.json`, reviewed false positives are hidden from issues, report, dispatch and hazards, and `/api/videos` lists only uploads, running jobs and drives holding a pick. Off, every endpoint serves the pipeline's data untouched. The choice persists in `state/demo_curation.json` |
 
 ---
 

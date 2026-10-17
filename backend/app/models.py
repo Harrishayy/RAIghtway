@@ -44,7 +44,6 @@ class Issue(BaseModel):
     duplicate_of: str | None = None                   # set on re-sightings
     sightings: int = 1                                # canonical: 1 + re-sightings
     work_order: WorkOrder | None = None               # canonical issues only
-    featured: int | None = None                       # demo rank from app/curation.json, 1 shows first
     # Severity rating pass (app/ai/rating.py): a model re-grades the keyframe against the rubric.
     severity_reason: str | None = None                # one sentence: what the rater saw and why this grade
     severity_model: str | None = None                 # who graded: "cosmos3-reason", "nemotron-super-vl", "review";

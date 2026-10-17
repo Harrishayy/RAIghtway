@@ -56,4 +56,4 @@ This file covers what the UI must contain and how a user moves through it. It de
 
 ## Open points
 - **Bounding boxes:** the provided models don't produce boxes for road defects out of the box, so how we generate them still needs testing.
-- **Analysis time:** analysing a full day's footage takes a while, so how we handle this in a live demo is still to be decided.
+- **Analysis time:** analysing a full day's footage takes a while, so how we show it live is still to be decided.

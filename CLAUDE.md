@@ -14,7 +14,7 @@ The data is Toronto PIE dashcam drives (`pie_cam-3`, sets `set01`–`set06`) wit
 
 | File | What it settles |
 |---|---|
-| `idea.md` | The product and the demo story |
+| `idea.md` | The product and its story |
 | `architecture.md` | The system. **§4 is the data contract, §5 the API.** Both the frontend and the backend build to these |
 | `agents/README.md` | The work split into 8 workstreams, plus the shared contracts that let them build in parallel |
 | `agents/0N_*.md` | One brief per workstream (backend core, VAST, models, GPS, live pipeline, precompute, report and dispatch, frontend) |
@@ -32,8 +32,8 @@ agents/            build-day workstream briefs (historical; see agents/CLAUDE.md
 frontend/          pnpm workspace: apps/web (Next.js 16 console) + packages/core (contracts, adapters, sample data)
 docs/design/       design-directions page and its source
 backend/           FastAPI + pipeline; runs on the workshop VM (ssh bc-afthabshiraz, ~/Real_time_VIdeo_Agents)
-scripts/           one-off jobs run on the VM from backend/: inventory, GPS, demo clips, sweep import, Weave evals
-data/              VM-side inputs (gps.csv, inventory.json, demo_clips.json, sweep/); PIE and clips are git-ignored
+scripts/           one-off jobs run on the VM from backend/: inventory, GPS, sweep import, severity rating, Weave evals
+data/              VM-side inputs (gps.csv, inventory.json, sweep/); PIE and clips are git-ignored
 package.json       root shortcuts: pnpm dev | dev:mock | check | backend:status|restart|logs
 ```
 

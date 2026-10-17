@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from app import config, store  # noqa: E402
 from app.ai import embed, nemotron  # noqa: E402
-from app.geo import demo, gps, inventory  # noqa: E402
+from app.geo import gps, inventory  # noqa: E402
 from app.models import BBox, Detection, VideoRecord  # noqa: E402
 from app.pipeline import dedupe, piece, precompute, segment  # noqa: E402
 
@@ -95,7 +95,7 @@ async def work_orders(video: VideoRecord, records: list) -> list:
 
 
 async def import_drive(drive: str, segs: list, sweep: dict[str, dict], work: Path, dry_run: bool,
-                       limit: int | None, excluded: set[str]) -> None:
+                       limit: int | None) -> None:
     video_id = precompute._video_id(drive)
     existing = store.get_video(video_id)
     if existing and existing.status == "done":
@@ -112,9 +112,8 @@ async def import_drive(drive: str, segs: list, sweep: dict[str, dict], work: Pat
     if store.issues_for_video(video_id):
         log.warning("%s has issues from an earlier partial run; finishing the video only", drive)
     else:
-        # Demo-clip segments stay out, so the live upload is matched by another drive, not itself.
         rows = [(sweep[s.segment_id], s) for s in segs
-                if s.segment_id in sweep and sweep[s.segment_id].get("issues") and s.segment_id not in excluded]
+                if s.segment_id in sweep and sweep[s.segment_id].get("issues")]
         rows = rows[:limit] if limit else rows
         gate = asyncio.Semaphore(SEGMENT_CONCURRENCY)
         batches = await asyncio.gather(*(detections_for(r, s, start, work, gate) for r, s in rows),
@@ -180,16 +179,14 @@ async def main() -> None:
         by_drive.setdefault(seg.drive, []).append(seg)
     drives = [args.drive] if args.drive else sorted(by_drive)
     found = sum(len(r.get("issues") or []) for r in sweep.values())
-    excluded = set(demo.excluded_segments())
-    log.info("Sweep: %d segments, %d findings; %d drives to import; %d demo segments excluded",
-             len(sweep), found, len(drives), len(excluded))
+    log.info("Sweep: %d segments, %d findings; %d drives to import", len(sweep), found, len(drives))
 
     work = Path(config.STATE_DIR) / "sweep_import"
     work.mkdir(parents=True, exist_ok=True)
     try:
         for drive in drives:     # in order: earlier drives are dedupe history for later ones
             await import_drive(drive, sorted(by_drive[drive], key=lambda s: s.t_start), sweep, work,
-                               args.dry_run, args.limit, excluded)
+                               args.dry_run, args.limit)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

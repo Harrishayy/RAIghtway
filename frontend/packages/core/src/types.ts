@@ -52,8 +52,6 @@ export interface Issue {
   provisional?: boolean;
   /** `manual` = marked by an operator on footage (POST /api/issues), never a model finding. */
   source?: 'upload' | 'corpus' | 'manual';
-  /** Demo rank from a manual review of the footage (1 shows first); absent for most issues. */
-  featured?: number | null;
   /** Severity rating pass: one sentence on what the rater saw and why this grade. */
   severity_reason?: string | null;
   /** Who graded severity: `cosmos3-reason`, `nemotron-super-vl` (fallback). Absent = the find pass's grade. */

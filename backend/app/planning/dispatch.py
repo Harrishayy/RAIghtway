@@ -26,7 +26,7 @@ import logging
 import math
 import time
 
-from app import config, curation, store
+from app import config, store
 from app.ai.prompts import DEFAULT_MINUTES
 from app.geo import roads
 from app.geo.distance import LatLon, km
@@ -76,7 +76,7 @@ def pinned(issue: IssueRecord) -> bool:
 
 def _jobs() -> list[IssueRecord]:
     # Findings the rating pass judged not to be defects get no crew (unless an operator pinned them).
-    located = [i for i in curation.visible(store.canonical_issues())
+    located = [i for i in store.canonical_issues()
                if i.lat is not None and i.lon is not None and (getattr(i, "verdict", None) != "rejected" or pinned(i))]
     located.sort(key=lambda i: (not pinned(i), -i.severity, -i.confidence))
     return located

@@ -86,10 +86,6 @@ try:
 except ImportError:
     inventory = SimpleNamespace(load=_no_segments)  # TODO(agent4)
 try:
-    from app.geo import demo
-except ImportError:
-    demo = SimpleNamespace(excluded_segments=set, forced_segments=_no_segments)  # TODO(agent4)
-try:
     from app.geo import gps
 except ImportError:
     gps = SimpleNamespace(track=lambda drive, start_s, duration_s: [])  # TODO(agent4)
@@ -151,31 +147,22 @@ def _vss_extras(pool: dict[str, dict], taken: set[str]) -> list[dict]:
 
 
 def build_candidates(rebuild: bool = False) -> list[dict]:
-    """The sample to process, built once and saved. Demo exclusions are re-applied on every load."""
+    """The sample to process, built once and saved."""
     path = Path(config.STATE_DIR) / CANDIDATES_FILE
-    excluded = set(demo.excluded_segments())
     if path.exists() and not rebuild:
         try:
-            saved = json.loads(path.read_text())
-            return [s for s in saved if s["segment_id"] not in excluded]
+            return json.loads(path.read_text())
         except (OSError, ValueError, KeyError, TypeError) as exc:
             log.warning("Precompute candidates unreadable (%s); rebuilding", config.redact(exc))
     segments = [s for s in map(_segment, inventory.load()) if s]
-    pool = {s["segment_id"]: s for s in segments if s["segment_id"] not in excluded}
-    forced = []
-    for seg in map(_segment, demo.forced_segments()):
-        if seg and seg["segment_id"] not in excluded and seg["segment_id"] not in {f["segment_id"] for f in forced}:
-            forced.append(seg)
-    taken = {s["segment_id"] for s in forced}
-    moving = sorted((s for s in pool.values() if s["moving"] is not False and s["segment_id"] not in taken),
-                    key=lambda s: (s["drive"], s["t_start"]))
-    sample = _spread(moving, CANDIDATE_CAP - len(forced))
-    taken |= {s["segment_id"] for s in sample}
+    pool = {s["segment_id"]: s for s in segments}
+    moving = sorted((s for s in pool.values() if s["moving"] is not False), key=lambda s: (s["drive"], s["t_start"]))
+    sample = _spread(moving, CANDIDATE_CAP)
+    taken = {s["segment_id"] for s in sample}
     extras = _vss_extras(pool, taken) if VSS_EXTRAS else []
-    # Forced (the demo street seen from the other drive) first, so those pins land early.
-    candidates = forced + sorted(sample + extras, key=lambda s: (s["drive"], s["t_start"]))
-    log.info("Precompute candidates: %d (%d sampled from %d moving, %d forced, %d excluded, %d VSS extras)",
-             len(candidates), len(sample), len(moving), len(forced), len(excluded), len(extras))
+    candidates = sorted(sample + extras, key=lambda s: (s["drive"], s["t_start"]))
+    log.info("Precompute candidates: %d (%d sampled from %d moving, %d VSS extras)",
+             len(candidates), len(sample), len(moving), len(extras))
     if candidates:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(candidates, indent=1))
@@ -284,7 +271,7 @@ async def _with_work_orders(video: VideoRecord, records: list[IssueRecord]) -> l
 
 
 async def _wait_unpaused(stop: asyncio.Event) -> bool:
-    """Block while gpu.pause() is on (live demos win). False only if stop() came during the pause."""
+    """Block while gpu.pause() is on (live analysis wins). False only if stop() came during the pause."""
     if not gpu.is_paused():
         return True
     if not stop.is_set():

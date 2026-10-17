@@ -1,4 +1,4 @@
-"""Optional tracing; unavailable telemetry must never stop a demo."""
+"""Optional tracing; unavailable telemetry must never stop the pipeline."""
 import logging
 import os
 

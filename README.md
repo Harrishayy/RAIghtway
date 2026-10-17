@@ -59,8 +59,7 @@ cuOpt routes every crew from its own yard around the City's live closures. Play 
 
 Full-quality versions sit next to each GIF in [`docs/media/`](docs/media/) as `.mp4`. Re-record them all
 with `python3 docs/media/record.py` (see [`docs/media/README.md`](docs/media/README.md)). Live analysis
-(**Run**) isn't recorded here: each Run spends 30 s of footage nobody has analysed, and that footage is kept
-for the live demo.
+(**Run**) isn't recorded here: each Run spends 30 s of footage no pass has analysed yet.
 
 ---
 
@@ -92,33 +91,9 @@ the streets are already being filmed.
 | **Act** | Nemotron triages every job into today, later or defer, and proposes crew sizes that cuOpt scores. cuOpt routes each crew type as round trips from its own sites over one to seven days (lunch breaks, severity-5 jobs before noon), on street times and around City road closures. | **Nemotron Ultra**, NVIDIA **cuOpt**, OSRM, City of Toronto road restrictions |
 | **Search and ask** | Search all footage in plain language: VSS finds the moments, the console maps them onto drives and timelines, and Nemotron answers from the matches and the issues already logged there. Ask a drive questions, answered from its VSS captions and findings. Every drive gets a grounded summary. | **VAST VSS** index, **Nemotron Lightning** |
 
-On the current corpus (16 drives, about 1.5 hours of footage), Cosmos found **455 issues**. Its re-grading
-pass judged 136 of them not to be defects, which leaves **319 open issues**, recommended to **41 crews**
-across six crew types (`GET /api/report`, 17 Oct).
-
----
-
-## Demo (2 minutes)
-
-See → Decide → Act, on the live backend. Each beat names the sponsor label that appears on screen.
-
-| Time | Screen | Do | Say |
-|---|---|---|---|
-| 0:00 | Review | The map full of pins from yesterday's fleet footage | Fleets already film every street. That video sits in storage unwatched. |
-| 0:10 | Review | Press **Run** | It pulls footage nobody has analysed from VAST S3. Cosmos3-Reason checks every 5 s piece on CoreWeave GPUs. Findings pin themselves to the map; a pothole seen on an earlier drive merges as a re-sighting. |
-| 0:35 | Review | Search `pothole` | VSS searches all 1.5 hours in plain language. Nemotron answers from the matches and says which are already logged. |
-| 0:50 | Review | Open a finding | The box Cosmos drew, why it got its severity, the work order, and similar issues across the city from **VastDB vector search**. |
-| 1:05 | Review · Chat | Ask "What is the worst thing on this drive?" | Answered by Nemotron from this drive's VSS captions and findings, with times you can click. |
-| 1:15 | Report | Scroll the summary and Fix today | Nemotron Ultra writes tomorrow's plan: what to fix today, this week, and how many crews. |
-| 1:30 | Dispatch | The **Nemotron 3 Ultra + cuOpt recommends** card, the routes, press play | Nemotron triages and proposes crew sizes; **cuOpt** scores them and routes every crew from its yard around today's road closures. |
-| 1:50 | W&B Weave | One trace | Every model call is traced and evaluated in Weave. From footage to a crew at the door. |
-
-**Before recording**
-- `pnpm demo:status` should say on; stop any precompute (`POST /api/admin/precompute/stop`).
-- On the VM, from `backend/`: `.venv/bin/python ../scripts/warm_vss.py "pothole"`, so the searches you'll show answer from the cache.
-- Press **Ask again** on Dispatch, then **Apply and plan**, with nothing else running (a plan takes 35–70 s, and two cuOpt jobs at once can time out). Check that the card's scenarios are evaluated and that the plan says **cuOpt**.
-- Press **Regenerate** on Report after the plan, so its crew plan matches.
-- Each Run uses up 30 s of unseen footage; rehearse sparingly. The first Run is the held-back demo street.
+On the current corpus (16 drives, about 1.5 hours of footage), Cosmos found **469 issues** in 572 sightings.
+Its re-grading pass judged 145 of them not to be defects, which leaves **324 open issues** for the report
+and the crews (17 Oct).
 
 ---
 
@@ -341,7 +316,7 @@ The full list, with request and response shapes, is [`architecture.md` §5](arch
 ├── frontend/               pnpm workspace
 │   ├── apps/web/           Next.js 16 operator console
 │   └── packages/core/      contract types, zod schemas, HTTP client, sample city
-├── scripts/                inventory, GPS, demo clips, sweep import, Weave evals
+├── scripts/                inventory, GPS, sweep import, severity rating, Weave evals
 ├── agents/                 the build-day workstream briefs
 ├── docs/                   design directions, README media
 └── architecture.md         the system, data contract (§4) and API (§5)

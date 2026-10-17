@@ -348,7 +348,6 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 .issues-tbl tr.rejected .sev-dot{opacity:.45}
 .issues-tbl tr.rejected b{font-weight:500;text-decoration:line-through;text-decoration-color:var(--line-strong)}
 .issues-tbl .two .chip{margin-right:6px;padding:2px 5px}
-.pick{font:600 11px var(--font-m);color:var(--accent-text);margin-right:6px}
 @container (max-width:360px){.grp-h{flex-direction:column;align-items:flex-start}.sev-chip{padding-right:4px}}
 
 /* ---------- issue card: severity grade ---------- */

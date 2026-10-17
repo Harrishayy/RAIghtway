@@ -84,7 +84,7 @@ The whole pipeline runs on NVIDIA's stack, with each model doing a distinct job:
 | Infrastructure   | VAST AI OS, CoreWeave                   | Video ingestion, storage and indexing (provided by the event)                                       |
 
 
-**Data for the demo:** the event's pre-indexed footage, including Toronto forward-facing dashcam drives (the PIE dataset). These are a stand-in for the footage an AV or fleet records every day. The original dataset's per-frame GPS lets us place each issue on a real map.
+**Data:** the event's pre-indexed footage, including Toronto forward-facing dashcam drives (the PIE dataset). These are a stand-in for the footage an AV or fleet records every day. The original dataset's per-frame GPS lets us place each issue on a real map.
 
 ---
 

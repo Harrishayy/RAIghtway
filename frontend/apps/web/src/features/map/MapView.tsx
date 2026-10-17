@@ -1,6 +1,6 @@
 'use client';
 // One map API for every screen. Uses real vector tiles (TileMap) when they load, and falls back to the
-// offline schematic (SchematicMap) if WebGL or the tile service is unavailable, so the demo never shows
+// offline schematic (SchematicMap) if WebGL or the tile service is unavailable, so the console never shows
 // an empty box. Adds the alert bar (counts per issue type, hazards you can step through) and a legend.
 import dynamic from 'next/dynamic';
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';

@@ -1,6 +1,6 @@
 // In-memory backend with the same contract as the real one, including a live upload that walks the
 // pipeline stages in real time. The UI cannot tell it apart from the API, which is the point: every
-// screen is built and demoed against it, and switching to the API is configuration.
+// screen is built and tried against it offline, and switching to the API is configuration.
 import type { Facility, Issue, LatLon, Plan, Recommendation, Zone, ReportIssue, ReportPayload, StageId, TopicHit, Video, WorkOrder } from '../types';
 import { CATEGORY, CREW_FOR, STAGES } from '../registry';
 import { fmtClock } from '../format';

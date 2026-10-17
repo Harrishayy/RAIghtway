@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import importlib
 import inspect
 import logging
-import os
 from pathlib import Path
 import re
 import shutil
@@ -18,7 +17,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from app import config, curation, store
+from app import config, store
 from app.models import (CREW_FOR, BBox, Category, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Recommendation, Zone,
                         Report, Route,
                         SimilarIssue, Video, VideoRecord)
@@ -122,28 +121,6 @@ def _startup_call(module: str, name: str) -> None:
         log.warning("Startup %s.%s failed (%s)", module, name, config.redact(exc))
 
 
-def _seed_fixtures() -> None:
-    now = datetime.now(timezone.utc)
-    videos = [VideoRecord(id=f"demo-video-{n}", filename=f"toronto_corpus_{n}.mp4", source="corpus",
-                          status="done", progress=1, stage="done", created_at=now, duration_s=30,
-                          track=[(43.650, -79.385), (43.654, -79.377)]) for n in (1, 2)]
-    categories = ["pavement", "graffiti", "markings", "work_zone", "signage", "waste", "pavement", "pavement"]
-    issues = []
-    for index, category in enumerate(categories):
-        id = f"demo-issue-{index + 1}"
-        video = videos[index // 4]
-        issue = IssueRecord(id=id, video_id=video.id, t=float(index % 4 * 5), category=category,
-                            severity=1 + index % 5, confidence=0.9,
-                            description=f"Demo {category.replace('_', ' ')} maintenance finding",
-                            frame_url=f"/api/frames/{id}", frame_key="", bbox=None,
-                            lat=43.650 + index * 0.0005, lon=-79.385 + index * 0.001,
-                            duplicate_of="demo-issue-1" if index == 7 else None,
-                            source="corpus", created_at=now)
-        issues.append(issue)
-        video.issue_ids.append(id)
-    store.seed_memory(videos, issues)
-
-
 async def _warm_road_alerts() -> None:
     """Fetch the city's road restrictions once at startup, so the first plan doesn't wait on it."""
     try:
@@ -156,8 +133,6 @@ async def _warm_road_alerts() -> None:
 async def lifespan(app: FastAPI):
     for module, name in (("app.ai.weave_setup", "init"), ("app.vast.db", "ensure_tables"), ("app.store", "load")):
         await asyncio.to_thread(_startup_call, module, name)
-    if os.environ.get("DEMO_FIXTURES") == "1":
-        await asyncio.to_thread(_seed_fixtures)
     warm = asyncio.create_task(_warm_road_alerts())
     _analysis_tasks.add(warm)
     warm.add_done_callback(_analysis_tasks.discard)
@@ -186,9 +161,7 @@ def _video(record: VideoRecord) -> Video:
 
 
 def _issue(record: IssueRecord) -> Issue:
-    issue = Issue.model_validate(record.model_dump(include=set(Issue.model_fields)))
-    issue.featured = curation.featured(record.id)
-    return issue
+    return Issue.model_validate(record.model_dump(include=set(Issue.model_fields)))
 
 
 def _require_video(id: str) -> VideoRecord:
@@ -283,13 +256,7 @@ async def run_next(body: RunRequest | None = None):
 
 @app.get("/api/videos", response_model=list[Video])
 def videos():
-    listed = store.list_videos()
-    if curation.enabled():
-        by_video: dict[str, list] = {}
-        for i in store.canonical_issues():
-            by_video.setdefault(i.video_id, []).append(i)
-        listed = [v for v in listed if curation.keep_video(v, by_video)]
-    return [_video(v) for v in listed]
+    return [_video(v) for v in store.list_videos()]
 
 
 class VideoDetail(BaseModel):
@@ -300,7 +267,7 @@ class VideoDetail(BaseModel):
 @app.get("/api/videos/{id}", response_model=VideoDetail)
 def video_detail(id: str):
     video = _require_video(id)
-    return VideoDetail(video=_video(video), issues=[_issue(i) for i in curation.visible(store.issues_for_video(id))])
+    return VideoDetail(video=_video(video), issues=[_issue(i) for i in store.issues_for_video(id)])
 
 
 @app.get("/api/videos/{id}/file")
@@ -317,7 +284,7 @@ def video_file(id: str):
 
 @app.get("/api/issues", response_model=list[Issue])
 def issues():
-    return [_issue(i) for i in curation.visible(store.canonical_issues())]
+    return [_issue(i) for i in store.canonical_issues()]
 
 
 class ManualIssueRequest(BaseModel):
@@ -406,7 +373,7 @@ async def search_footage(body: SearchRequest):
         log.warning("Footage search unavailable (%s)", config.redact(exc))
         raise HTTPException(503, "VSS search is unavailable") from None
     try:
-        logged = [i for i in curation.visible(store.all_issues()) if i.verdict != "rejected"]
+        logged = [i for i in store.all_issues() if i.verdict != "rejected"]
         return await topic_search.search(body.query, {v.id: v for v in videos()}, logged)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
@@ -435,7 +402,7 @@ async def ask_video(id: str, body: AskRequest):
         log.warning("Ask unavailable (%s)", config.redact(exc))
         raise HTTPException(503, "Ask is unavailable") from None
     try:
-        return await ask.ask(video, body.question, body.t, curation.visible(store.issues_for_video(id)),
+        return await ask.ask(video, body.question, body.t, store.issues_for_video(id),
                              [turn.model_dump() for turn in body.history])
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
@@ -796,21 +763,6 @@ def reset():
     return {"reset_cutoff": store.reset()}
 
 
-class DemoToggle(BaseModel):
-    on: bool
-
-
-@app.get("/api/admin/demo")
-def demo_status():
-    return {"on": curation.enabled()}
-
-
-@app.post("/api/admin/demo")
-def demo_toggle(request: DemoToggle):
-    """Demo mode: reviewed picks first, only their drives, rejected findings hidden. Off = the raw pipeline."""
-    return {"on": curation.set_enabled(request.on)}
-
-
 @app.get("/api/health")
 def health():
-    return {"ok": True, "store_source": store.source(), "demo_curation": curation.enabled()}
+    return {"ok": True, "store_source": store.source()}

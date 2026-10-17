@@ -31,7 +31,6 @@ export const IssueSchema = z.looseObject({
   place: z.string().optional().catch(undefined), sighting_refs: z.array(SightingRef).optional().catch(undefined),
   frame_seed: z.number().optional().catch(undefined), provisional: z.boolean().optional().catch(undefined),
   source: z.enum(['upload', 'corpus', 'manual']).optional().catch(undefined),
-  featured: z.coerce.number().int().positive().nullable().optional().catch(undefined),
   severity_reason: z.string().nullable().optional().catch(undefined),
   severity_model: z.string().nullable().optional().catch(undefined),
   verdict: z.enum(['confirmed', 'rejected']).nullable().optional().catch(undefined),
