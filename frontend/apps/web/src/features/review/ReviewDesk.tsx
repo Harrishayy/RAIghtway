@@ -9,7 +9,6 @@ import { useCategories, useUi } from '@/state/ui';
 import { Desk } from '@/layout/Desk';
 import { MapView } from '@/features/map/MapView';
 import { IssueCard } from '@/features/issues/IssueCard';
-import { UploadButton } from '@/features/upload/UploadButton';
 import { Seg } from '@/ui/Seg';
 import { Empty, Failed, Loading } from '@/ui/State';
 import { FootageList } from './FootageList';
@@ -39,7 +38,7 @@ export function ReviewDesk() {
 
   return (
     <Desk panes={{
-      footage: { id: 'footage', title: 'Footage', actions: <UploadButton />, body: <FootageList /> },
+      footage: { id: 'footage', title: 'Footage', body: <FootageList /> },
       player: { id: 'player', title: 'Player', actions: video ? <span className="fname mono muted">{video.filename}</span> : null, body: playerBody },
       map: {
         id: 'map', title: 'Map', actions: <Seg size="sm" label="Map extent" value={mapView} onChange={setMapView} options={[{ value: 'drive', label: 'Drive' }, { value: 'city', label: 'City' }]} />,
@@ -47,7 +46,7 @@ export function ReviewDesk() {
           <MapView label={video ? `Map of ${video.drive ?? video.filename}` : 'Map'} issues={mapIssues} emphasise={i => i.video_id === videoId} selectedId={selectedIssue}
             onSelect={i => (i.video_id === videoId ? (select(i.id), usePlayback.getState().seek(Math.max(0, i.t - 0.4))) : open(i.video_id, Math.max(0, i.t - 0.4), i.id))}
             track={video?.track} travelled={video?.duration_s ? t / video.duration_s : 0} vehicle={fix} focus={mapView === 'city' ? [] : video?.track}
-            overlay={fix?.speed != null ? <span className="mapchip num">{Math.round(fix.speed)} km/h</span> : null} />
+            overlay={fix?.speed != null ? <span className="mapchip num">{Math.round(fix.speed)} km/h</span> : null} className="map-scale" />
           <IssueCard issue={selected} />
         </>,
       },

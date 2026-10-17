@@ -49,7 +49,7 @@ export const useUi = create<UiState>()(persist((set, get) => ({
     const p = (persisted ?? {}) as Partial<UiState>; const out = { ...current, ...p };
     if (!Array.isArray(p.order) || p.order.length !== 3 || !DEFAULT_ORDER.every(k => p.order!.includes(k))) out.order = DEFAULT_ORDER;
     if (!p.preset || !(p.preset in CATEGORY_PRESETS)) out.preset = 'all';
-    if (!['survey', 'night', 'paint'].includes(p.direction as string)) out.direction = current.direction;
+    out.direction = current.direction;   // the look picker is hidden: always the default (survey)
     if (!p.widths || !Number.isFinite(p.widths.a) || !Number.isFinite(p.widths.c)) out.widths = DEFAULT_WIDTHS;
     return out;
   },

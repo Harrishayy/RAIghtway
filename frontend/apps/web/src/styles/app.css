@@ -69,7 +69,8 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 /* ---------- footage ---------- */
 .frame-empty{position:absolute;inset:0;display:grid;place-items:center;background:#0b0d0f;color:#9aa3ab;font:500 12px var(--font-m);letter-spacing:.06em;text-transform:uppercase}
 .frame img,.frame video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
-.mark.provisional .ring{stroke-dasharray:6 5!important;opacity:.85}
+.mark.provisional .bb{border-style:dashed;opacity:.85}
+.mark.provisional .c{display:none}
 .vrow.live{background:color-mix(in oklab,var(--accent) 7%,transparent)}
 .vrow .stage-track{margin:2px 0}
 .stage-track{list-style:none;margin:0;padding:0}
@@ -91,6 +92,8 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 .m-pin.prov circle{stroke-dasharray:2 2}
 .m-pin:focus-visible circle{stroke:var(--focus);stroke-width:3}
 .map-tall{height:340px}
+/* Review: the map keeps its shape and grows in both directions as its pane widens, like the video */
+.mapbox.map-scale{height:auto;aspect-ratio:4/3;min-height:220px;max-height:66dvh}
 .mapchip{padding:4px 8px;border-radius:var(--r);background:var(--surface);border:var(--bw) solid var(--line);font:500 11px var(--font-m);color:var(--ink-2);white-space:nowrap}
 
 

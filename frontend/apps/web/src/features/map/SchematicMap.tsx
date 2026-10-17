@@ -8,7 +8,7 @@ import { env } from '@/config/env';
 import { hit, useSize } from '@/lib/useSize';
 
 import type { MapViewProps } from './MapView';
-import { GLYPH } from './glyphs';
+import { ALERT_NOUN, GLYPH } from './glyphs';
 
 const pts = (a: Array<[number, number]>) => a.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
 const path = (a: Array<[number, number]>) => a.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('');
@@ -73,6 +73,7 @@ export default function SchematicMap({ issues, emphasise, selectedId, onSelect, 
                 {i.severity === 5 && em ? <circle className="m-hz" cx={x} cy={y} r={pr * 2.2} /> : null}
                 <circle cx={x} cy={y} r={(em ? pr : pr * 0.7) * 1.45} />
                 {em ? <path className="m-glyph" d={GLYPH[i.category]} transform={`translate(${x - pr * 0.95} ${y - pr * 0.95}) scale(${(pr * 1.9) / 24})`} /> : null}
+                {i.id === selectedId ? <text className="m-sel-label" x={x} y={y + pr * 3.6} fontSize={pr * 1.9} textAnchor="middle">Selected · {ALERT_NOUN[i.category]} · S{i.severity}</text> : null}
               </g>
             );
           })}

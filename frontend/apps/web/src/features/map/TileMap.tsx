@@ -34,7 +34,7 @@ let workerSet = false;
 function palette() {
   const cs = getComputedStyle(document.documentElement); const v = (n: string) => cs.getPropertyValue(n).trim() || 'gray';
   const cat: Record<CategoryId, string> = { graffiti: v('--c-graffiti'), markings: v('--c-markings'), work_zone: v('--c-workzone'), pavement: v('--c-pavement'), signage: v('--c-signage'), waste: v('--c-waste') };
-  return { sev: [1, 2, 3, 4, 5].map(n => v(`--sev-${n}`)), onLo: v('--on-sev-lo'), onHi: v('--on-sev-hi'), cat, accent: v('--accent-text'), ink: v('--ink'), ink2: v('--ink-2'), surface: v('--surface'), bad: v('--bad') };
+  return { sev: [1, 2, 3, 4, 5].map(n => v(`--sev-${n}`)), onLo: v('--on-sev-lo'), onHi: v('--on-sev-hi'), cat, accent: v('--accent-text'), accentFill: v('--accent'), ink: v('--ink'), ink2: v('--ink-2'), surface: v('--surface'), bad: v('--bad') };
 }
 
 /** A round alert marker: severity fill, issue-type glyph, surface ring. Drawn at 2× for crisp edges. */
@@ -119,8 +119,11 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
         map.addLayer({ id: 'hz', type: 'circle', source: 'issues', filter: ['all', ['!', ['has', 'point_count']], ['==', ['get', 'hz'], 1]], paint: { 'circle-radius': 16, 'circle-color': p.bad, 'circle-opacity': 0.3 } });
         map.addLayer({ id: 'clusters', type: 'circle', source: 'issues', filter: ['has', 'point_count'], paint: { 'circle-color': sevColor, 'circle-radius': ['step', ['get', 'point_count'], 13, 8, 16, 25, 20], 'circle-stroke-color': p.surface, 'circle-stroke-width': 2, 'circle-opacity': 0.92 } });
         map.addLayer({ id: 'cluster-n', type: 'symbol', source: 'issues', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': FONT, 'text-size': 11.5, 'text-allow-overlap': true }, paint: { 'text-color': ['case', ['>=', ['get', 'maxSev'], 3], p.onHi, p.onLo] } });
-        map.addLayer({ id: 'sel', type: 'circle', source: 'sel', paint: { 'circle-radius': 19, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': p.ink, 'circle-stroke-width': 2.5 } });
         map.addLayer({ id: 'pins', type: 'symbol', source: 'issues', filter: ['!', ['has', 'point_count']], layout: { 'icon-image': ['get', 'icon'], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['get', 'sev'] }, paint: { 'icon-opacity': ['case', ['==', ['get', 'em'], 1], 1, 0.38] } });
+        // the selected issue is never clustered: its own larger pin, an accent halo centred on it, and a label
+        map.addLayer({ id: 'sel', type: 'circle', source: 'sel', paint: { 'circle-radius': 22, 'circle-color': p.accentFill, 'circle-opacity': 0.16, 'circle-stroke-color': p.accentFill, 'circle-stroke-width': 2.5 } });
+        map.addLayer({ id: 'sel-pin', type: 'symbol', source: 'sel', layout: { 'icon-image': ['get', 'icon'], 'icon-size': 1.2, 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
+        map.addLayer({ id: 'sel-label', type: 'symbol', source: 'sel', layout: { 'text-field': ['get', 'label'], 'text-font': FONT, 'text-size': 11.5, 'text-offset': [0, 2.4], 'text-anchor': 'top', 'text-max-width': 40, 'text-allow-overlap': true, 'text-ignore-placement': true }, paint: { 'text-color': p.accent, 'text-halo-color': p.surface, 'text-halo-width': 2 } });
         map.addLayer({ id: 'veh', type: 'symbol', source: 'veh', layout: { 'icon-image': 'veh', 'icon-rotate': ['get', 'heading'], 'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
 
         // alerts: hover for the card, click to select; clusters zoom in
@@ -158,9 +161,9 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
   const setData = (id: string, data: FC) => (mapRef.current?.getSource(id) as GeoJSONSource | undefined)?.setData(data);
   function pushIssues() {
     const { issues, emphasise, selectedId } = latest.current;
-    setData('issues', fc(issues.filter(i => i.lat != null && i.lon != null).map(i => pt(i.lon!, i.lat!, { id: i.id, sev: i.severity, hz: i.severity === 5 ? 1 : 0, icon: `a-${i.category}-${i.severity}`, em: !emphasise || emphasise(i) ? 1 : 0 }))));
+    setData('issues', fc(issues.filter(i => i.lat != null && i.lon != null && i.id !== selectedId).map(i => pt(i.lon!, i.lat!, { id: i.id, sev: i.severity, hz: i.severity === 5 ? 1 : 0, icon: `a-${i.category}-${i.severity}`, em: !emphasise || emphasise(i) ? 1 : 0 }))));
     const s = issues.find(i => i.id === selectedId);
-    setData('sel', fc(s && s.lat != null ? [pt(s.lon!, s.lat!)] : []));
+    setData('sel', fc(s && s.lat != null && s.lon != null ? [pt(s.lon, s.lat, { id: s.id, icon: `a-${s.category}-${s.severity}`, label: `Selected · ${ALERT_NOUN[s.category]} · S${s.severity}` })] : []));
   }
   function pushStatic() {
     const { track = [], depot, depots = [], roadAlerts = [] } = latest.current;
@@ -187,7 +190,9 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
     if (!pts.length) return;
     let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity; pts.forEach(([la, lo]) => { w = Math.min(w, lo); e = Math.max(e, lo); s = Math.min(s, la); n = Math.max(n, la); });
     const padDeg = (minSpan / 111320) / 2; if (n - s < padDeg * 2) { const c = (n + s) / 2; s = c - padDeg; n = c + padDeg; } if (e - w < padDeg * 2) { const c = (e + w) / 2; w = c - padDeg; e = c + padDeg; }
-    map.fitBounds([[w, s], [e, n]], { padding: Math.min(48, Math.round(Math.min(map.getContainer().clientWidth, map.getContainer().clientHeight) / 8)), duration: force ? 0 : 650, maxZoom: 16.5, bearing: latest.current.bearing ?? 0 });
+    // extra room at the top for the category chips that overlay the map, so no pin hides under them
+    const pad = Math.min(48, Math.round(Math.min(map.getContainer().clientWidth, map.getContainer().clientHeight) / 8));
+    map.fitBounds([[w, s], [e, n]], { padding: { top: pad + 36, bottom: pad, left: pad, right: pad }, duration: force ? 0 : 650, maxZoom: 16.5, bearing: latest.current.bearing ?? 0 });
   }
 
   useEffect(() => { if (ready.current) { pushIssues(); kick(); } }); // cheap: one setData of pins per render

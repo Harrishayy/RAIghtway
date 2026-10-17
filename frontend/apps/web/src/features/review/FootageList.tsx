@@ -26,7 +26,7 @@ export function FootageList() {
         {CATEGORY_PRESETS[preset].ids.map(c => <button key={c} type="button" className="fchip" data-cat={c} aria-pressed={!hidden.includes(c)} onClick={() => toggle(c)}><Icon name={c} />{CATEGORY[c].label}</button>)}
       </div>
       <label className="search search-in"><Icon name="search" /><span className="sr">Filter drives</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter drives" /></label>
-      {videos.isPending ? <Loading rows={6} /> : videos.isError ? <Failed error={videos.error} onRetry={() => void videos.refetch()} /> : !list.length ? <Empty title={q ? 'No drives match' : 'No footage yet'}>{q ? 'Try another street or set.' : 'Upload a clip to start.'}</Empty> :
+      {videos.isPending ? <Loading rows={6} /> : videos.isError ? <Failed error={videos.error} onRetry={() => void videos.refetch()} /> : !list.length ? <Empty title={q ? 'No drives match' : 'No footage yet'}>{q ? 'Try another street or set.' : 'Analysed drives appear here.'}</Empty> :
         list.map(v => <VideoRow key={v.id} v={v} issues={byVideo.get(v.id) ?? []} current={v.id === videoId} t={v.id === videoId ? t : 0} onOpen={() => { const first = (byVideo.get(v.id) ?? []).sort((a, b) => a.t - b.t)[0]; open(v.id, first ? Math.max(0, first.t - 0.4) : 0, first?.id ?? null); }} />)}
     </>
   );

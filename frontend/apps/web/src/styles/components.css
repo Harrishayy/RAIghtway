@@ -163,20 +163,24 @@ code{font-family:var(--font-m);font-size:.88em;background:var(--surface-2);paddi
 .hud{position:absolute;z-index:3;font:500 11px/14px var(--font-m);color:#F2F4F5;text-shadow:0 1px 2px rgba(0,0,0,.9);pointer-events:none;white-space:nowrap}
 .hud.h-tl{left:12px;top:10px}.hud.h-tr{right:12px;top:10px}.hud.h-bl{left:12px;bottom:10px}.hud.h-br{right:12px;bottom:10px}
 .hud .rec{display:inline-block;width:7px;height:7px;border-radius:50%;background:#FF4B3E;margin-right:6px}
-.mark{position:absolute;z-index:2;pointer-events:none}
-.mark svg{position:absolute;inset:-14%;width:128%;height:128%;overflow:visible}
-.mark .tag{position:absolute;left:0;bottom:calc(100% + 8px);padding:3px 7px 2px;font:700 10.5px/14px var(--font-m);letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;border-radius:2px;overflow:hidden;text-overflow:ellipsis}
-.mark .tag.below{bottom:auto;top:calc(100% + 8px)}
-.mark .tag.inside{bottom:auto;top:6px;left:6px}
-/* the bounding box is the direction's signature */
-[data-dir="survey"] .mark .ring{fill:none;stroke:#FF2D87;stroke-width:3.2;stroke-linecap:round;stroke-dasharray:4 3.5;filter:drop-shadow(0 0 1.5px rgba(255,45,135,.6))}
-[data-dir="survey"] .mark .tag{background:#FF2D87;color:#FFFFFF}
-[data-dir="night"] .mark .ring{fill:none;stroke:#FFB547;stroke-width:2.5;filter:drop-shadow(0 0 4px rgba(255,181,71,.9))}
-[data-dir="night"] .mark .tag{background:rgba(10,8,2,.82);color:#FFB547;box-shadow:inset 0 0 0 1px #FFB547}
-[data-dir="paint"] .mark .ring{fill:none;stroke:#FFC61A;stroke-width:4;stroke-linejoin:round}
-[data-dir="paint"] .mark .tag{background:#FFC61A;color:#1B1D21;box-shadow:2px 2px 0 #1B1D21;border-radius:6px}
-.mark.draw .ring{stroke-dashoffset:0;animation:ringdraw .7s var(--ease) both}
-[data-dir="survey"] .mark.draw .ring{animation:spray .65s var(--out) both}
+/* the bounding box: a detector-style rectangle. Edge + dark hairline so it reads on bright and dark footage,
+   heavier corner brackets, and the label flush to the box edge. The colour is the look's (--bx). */
+.mark{position:absolute;z-index:2;pointer-events:none;--bx:#FF2D87;--bx-ink:#FFFFFF}
+[data-dir="night"] .mark{--bx:#FFB547;--bx-ink:#1A1100}
+[data-dir="paint"] .mark{--bx:#FFC61A;--bx-ink:#1B1D21}
+.mark .bb{position:absolute;inset:0;border:2px solid var(--bx);border-radius:1px;background:color-mix(in srgb,var(--bx) 9%,transparent);box-shadow:0 0 0 1px rgba(0,0,0,.5),inset 0 0 0 1px rgba(0,0,0,.3)}
+.mark .c{position:absolute;width:min(14px,40%);height:min(14px,40%);border:0 solid var(--bx)}
+.mark .c.tl{left:-4px;top:-4px;border-left-width:4px;border-top-width:4px}
+.mark .c.tr{right:-4px;top:-4px;border-right-width:4px;border-top-width:4px}
+.mark .c.bl{left:-4px;bottom:-4px;border-left-width:4px;border-bottom-width:4px}
+.mark .c.br{right:-4px;bottom:-4px;border-right-width:4px;border-bottom-width:4px}
+.mark .tag{position:absolute;left:-4px;bottom:calc(100% + 4px);padding:2px 6px 1px;font:700 10.5px/14px var(--font-m);letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;border-radius:2px 2px 0 0;overflow:hidden;text-overflow:ellipsis;background:var(--bx);color:var(--bx-ink);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.mark .tag.below{bottom:auto;top:calc(100% + 4px);border-radius:0 0 2px 2px}
+.mark .tag.inside{bottom:auto;top:0;left:0;border-radius:0 0 2px 0}
+.mark.loose .bb{border-width:1.5px;border-style:dashed;background:none}
+.mark.loose .c{display:none}
+.mark.draw .bb,.mark.draw .c{animation:bbin .3s var(--out) both}
+.mark.draw .tag{animation:fadein .3s var(--out) both}
 .transport{display:flex;align-items:center;gap:6px 8px;padding:8px 10px;border-bottom:var(--bw) solid var(--line);flex-wrap:wrap}
 .transport-keys{display:inline-flex;gap:4px;flex:none}
 .tc{font:500 13px var(--font-m);font-variant-numeric:tabular-nums;padding:0 4px;white-space:nowrap}
@@ -230,7 +234,8 @@ code{font-family:var(--font-m);font-size:.88em;background:var(--surface-2);paddi
 .m-track-dim{fill:none;stroke:var(--ink-2);stroke-width:1.5;stroke-dasharray:4 4;vector-effect:non-scaling-stroke;opacity:.4}
 .m-pin circle{fill:var(--sv);stroke:var(--map-ground);stroke-width:2;vector-effect:non-scaling-stroke}
 .m-pin.dim{opacity:.28}
-.m-pin.sel circle{stroke:var(--ink);stroke-width:3}
+.m-pin.sel circle{stroke:var(--accent);stroke-width:3}
+.m-sel-label{fill:var(--accent-text);stroke:var(--surface);stroke-width:3px;paint-order:stroke;stroke-linejoin:round;font-weight:600;pointer-events:none;vector-effect:non-scaling-stroke}
 .m-car path{fill:var(--ink);stroke:var(--map-ground);stroke-width:2;vector-effect:non-scaling-stroke}
 .m-car circle{fill:var(--accent);opacity:.25}
 .mapchip{position:absolute;left:10px;top:10px;display:flex;gap:6px}
@@ -308,11 +313,10 @@ code{font-family:var(--font-m);font-size:.88em;background:var(--surface-2);paddi
 @keyframes hop{to{transform:translateY(-4px)}}
 @keyframes twinkle{50%{opacity:.25;transform:scale(.7)}}
 @keyframes roll{from{transform:translateX(-12px)}to{transform:translateX(12px)}}
-@keyframes ringdraw{from{stroke-dasharray:400;stroke-dashoffset:400}to{stroke-dasharray:400;stroke-dashoffset:0}}
-@keyframes spray{from{opacity:0;transform:scale(1.25) rotate(-8deg)}to{opacity:1;transform:none}}
+@keyframes bbin{from{opacity:0;transform:scale(1.06)}to{opacity:1;transform:none}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
 @keyframes tape{to{background-position:14.14px 0}}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}}
-.mark svg{transform-origin:center}
 .mark.flip .tag{left:auto;right:0}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
 
