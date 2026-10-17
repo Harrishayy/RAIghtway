@@ -574,6 +574,9 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 /* over a thumbnail inside a row button (Similar issues, the report's worst findings): a sibling, never nested */
 .similar li,.sec-top li{position:relative}
 .thumb-cover{position:absolute;top:50%;transform:translateY(-50%);left:9px;width:56px;aspect-ratio:16/9;z-index:1}
+/* The cover sits inside lists whose row rule (.similar button, .sec-top button) is more specific and would stretch
+   it into a full-width bordered box over the card; undo those row styles so it stays a clear 56 px hit area. */
+.similar .photo-btn.thumb-cover,.sec-top .photo-btn.thumb-cover{display:inline-grid;width:56px;height:auto;padding:0;border:0;background:none;grid-template-columns:none;gap:0}
 .sec-top .thumb-cover{left:9px}
 @container (max-width:300px){.similar .thumb-cover{display:none}}
 @container (max-width:360px){.sec-top .thumb-cover,.pri-tbl .photo-btn{display:none}}

@@ -137,12 +137,28 @@ def test_search_answer_is_cached_and_never_raises(monkeypatch):
     monkeypatch.setattr(nemotron, "chat_json", chat)
     hits = [TopicHit(video_id="v", start=530, end=540, score=1, similarity=0.34, caption="Orange cones narrow the lane.")]
     v = {"v": video("v")}
-    assert asyncio.run(summaries.search_answer("cones", hits, {0: ["Work zone on Queen"]}, v)) == "Cones on 2 drives. 1 is logged, 1 is not."
-    assert asyncio.run(summaries.search_answer("cones", hits, {0: ["Work zone on Queen"]}, v)).startswith("Cones")
+    assert asyncio.run(summaries.search_answer("cones", hits, {0: ["Work zone on Queen"]}, v)) == ("Cones on 2 drives. 1 is logged, 1 is not.", False)
+    assert asyncio.run(summaries.search_answer("cones", hits, {0: ["Work zone on Queen"]}, v))[0].startswith("Cones")
     assert len(calls) == 1 and "Work zone on Queen" in calls[0][1]["content"]
 
     async def down(*a, **k):
         raise TimeoutError()
     monkeypatch.setattr(nemotron, "chat_json", down)
-    assert asyncio.run(summaries.search_answer("debris", hits, {}, v)) == ""
-    assert asyncio.run(summaries.search_answer("debris", [], {}, v)) == ""
+    assert asyncio.run(summaries.search_answer("debris", hits, {}, v)) == ("", False)
+    assert asyncio.run(summaries.search_answer("debris", [], {}, v)) == ("", False)
+
+
+def test_slow_search_answer_finishes_in_the_background(monkeypatch):
+
+    async def slow(messages, schema, **k):
+        await asyncio.sleep(0.2)
+        return schema(answer="Cones on 1 drive.")
+    monkeypatch.setattr(nemotron, "chat_json", slow)
+    monkeypatch.setattr(summaries, "ANSWER_WAIT_S", 0.01)
+    hits = [TopicHit(video_id="v", start=1, end=6, score=1, similarity=0.3, caption="Cones.")]
+
+    async def run():
+        first = await summaries.search_answer("cones", hits, {}, {})
+        await asyncio.sleep(0.3)                              # the background call finishes and caches
+        return first, await summaries.search_answer("cones", hits, {}, {})
+    assert asyncio.run(run()) == (("", True), ("Cones on 1 drive.", False))

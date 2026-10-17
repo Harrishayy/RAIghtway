@@ -86,6 +86,8 @@ export interface Video {
   explanation: string | null;
   /** Who wrote `explanation`: Nemotron, or the template stand-in when Nemotron failed (UI extra). */
   explanation_source?: 'nemotron' | 'template' | null;
+  /** Run clips: footage never analysed (`new`), or a re-check of analysed footage. */
+  run_kind?: 'new' | 'recheck' | null;
   issue_ids: string[];
   track: LatLon[];
   /** UI extras */
@@ -327,7 +329,7 @@ export interface TrackPoint { t: number; lat: number; lon: number; heading: numb
 export interface TopicHit { video_id: string; start: number; end: number; score: number; caption: string; similarity?: number }
 /** `POST /api/search`: VSS matches on the listed drives, VSS's own synthesis, and Nemotron's answer from the matches
  *  and the issues already logged inside them (`answer_source` null: no answer, show the synthesis). */
-export interface TopicSearch { query: string; hits: TopicHit[]; search?: 'vss'; synthesis?: string; answer?: string; answer_source?: 'nemotron' | null; logged?: number }
+export interface TopicSearch { query: string; hits: TopicHit[]; search?: 'vss'; synthesis?: string; answer?: string; answer_source?: 'nemotron' | null; answer_pending?: boolean; logged?: number }
 /** `POST /api/videos/{id}/ask`: an answer about one drive, from VSS captions (`evidence`) and its logged issues. */
 export interface AskEvidence { start: number; end: number; caption: string; kind: 'segment' | 'search' }
 export interface AskAnswer { question: string; answer: string; source: 'nemotron' | 'vss'; times: number[]; evidence: AskEvidence[]; issue_ids: string[] }

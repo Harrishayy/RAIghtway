@@ -89,7 +89,7 @@ function VideoRow({ row: { v, runs, issues }, hits, current, t, onOpen }: { row:
           {current && v.duration_s > 0 ? <b style={{ left: `${(t / v.duration_s) * 100}%` }} /> : null}
         </span>
       )}
-      <span className="vrow-meta"><span className="num">{v.duration_s ? fmtClock(v.duration_s) : '—'}{runs.length > 1 ? ` · ${runs.length} runs` : ''}</span><span>{live ? `${Math.round(v.progress * 100)}%${v.eta_s ? ` · ${v.eta_s} s left` : ''}` : hits ? `${hits.length} match${hits.length === 1 ? '' : 'es'} · ${logged} logged` : `${issues.length} finding${issues.length === 1 ? '' : 's'}`}</span></span>
+      <span className="vrow-meta"><span className="num">{v.duration_s ? fmtClock(v.duration_s) : '—'}{runs.length > 1 ? ` · ${runs.length} runs` : ''}{v.run_kind === 'recheck' ? ' · re-check' : v.run_kind === 'new' ? ' · new footage' : ''}</span><span>{live ? `${Math.round(v.progress * 100)}%${v.eta_s ? ` · ${v.eta_s} s left` : ''}` : hits ? `${hits.length} match${hits.length === 1 ? '' : 'es'} · ${logged} logged` : `${issues.length} finding${issues.length === 1 ? '' : 's'}`}</span></span>
     </button>
   );
 }

@@ -105,6 +105,7 @@ ROUTING_URL = _get("ROUTING_URL", "https://router.project-osrm.org")
 ROUTING_MIN_INTERVAL_S = _get("ROUTING_MIN_INTERVAL_S")   # default: 1 s on the public server, 0 elsewhere
 ROAD_RESTRICTIONS_URL = _get("ROAD_RESTRICTIONS_URL",
                              "https://secure.toronto.ca/opendata/cart/road_restrictions/v3?format=json")
+RUN_CLIPS = int(_get("RUN_CLIPS", "3"))           # clips one Run press analyses: new footage first, then re-checks
 DEMO_CURATION = _get("DEMO_CURATION")             # "1": demo mode on at start (app/curation.py)
 FACILITIES_FILE = _get("FACILITIES_FILE")         # JSON list of Facility; defaults to app/planning/facilities.json
 

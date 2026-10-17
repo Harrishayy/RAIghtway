@@ -26,8 +26,10 @@ from app.models import IssueRecord, TopicHit, Video, VideoRecord
 log = logging.getLogger(__name__)
 OVERLAY_FILE = "explanations.json"
 ANSWERS_FILE = "search_answers.json"
-SUMMARY_TIMEOUT_S = 30.0         # Lightning reasons first (~750+ tokens), so chat_json keeps its 4096-token budget
-ANSWER_TIMEOUT_S = 8.0           # the search waits this long for Nemotron, then answers with VSS's synthesis only
+SUMMARY_TIMEOUT_S = 45.0
+SUMMARY_TOKENS = 8192            # Lightning reasons first (750 to 4000+ tokens); at 4096 some replies came back empty
+ANSWER_WAIT_S = 8.0              # the search waits this long for Nemotron, then answers with VSS's synthesis only
+ANSWER_BUDGET_S = 60.0           # ...while the answer keeps going in the background and is cached for the next call
 MAX_OVERLAP = 0.5                # share of word trigrams a summary may repeat from another drive's
 MAX_WORDS = 90
 STREET_LOOKUPS = 6               # OSRM nearest calls per drive (the public server allows ~1 a second)
@@ -40,6 +42,7 @@ _lock = Lock()
 _overlay: dict[str, dict] | None = None
 _answers: dict[str, str] | None = None
 _streets: dict[tuple[float, float], str | None] = {}
+_pending: dict[str, asyncio.Task] = {}
 
 
 def is_template(text: str | None) -> bool:
@@ -254,7 +257,7 @@ async def summarise_drive(video: VideoRecord, issues: list[IssueRecord], fleet: 
                 {"role": "user", "content": json.dumps(facts)}]
     for attempt in range(2):
         try:
-            reply = await nemotron.chat_json(messages, DriveSummary, timeout=SUMMARY_TIMEOUT_S)
+            reply = await nemotron.chat_json(messages, DriveSummary, timeout=SUMMARY_TIMEOUT_S, max_tokens=SUMMARY_TOKENS)
         except Exception as exc:
             log.warning("Drive summary for %s: Nemotron failed (%s)", video.id, config.redact(exc))
             break
@@ -330,16 +333,32 @@ def _answers_cache() -> dict[str, str]:
 
 
 async def search_answer(query: str, hits: list[TopicHit], logged: dict[int, list[str]],
-                        videos: dict[str, Video]) -> str:
-    """Nemotron's two-sentence answer to a footage search; "" when it can't answer in time. Cached per result."""
-    from app.ai import nemotron
+                        videos: dict[str, Video]) -> tuple[str, bool]:
+    """(answer, pending): Nemotron's two-sentence answer to a footage search, cached per result. Never raises.
+    After ANSWER_WAIT_S it returns ("", True) and the answer keeps going in the background, so asking
+    again shortly gets it from the cache. ("", False) means no answer is coming (no hits, or Nemotron failed)."""
     if not hits:
-        return ""
+        return "", False
     top = hits[:8]
     key = json.dumps([query, [(h.video_id, h.start) for h in top], [len(logged.get(k, [])) for k in range(len(top))]])
     with _lock:
         if key in _answers_cache():
-            return _answers_cache()[key]
+            return _answers_cache()[key], False
+    task = _pending.get(key)
+    if task is None:
+        task = asyncio.create_task(_write_answer(key, query, top, len(hits), logged, videos))
+        _pending[key] = task
+        task.add_done_callback(lambda _t, k=key: _pending.pop(k, None))
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), ANSWER_WAIT_S), False
+    except asyncio.TimeoutError:
+        log.info("Search answer for %r still running; the next call reads it from the cache", query)
+        return "", True
+
+
+async def _write_answer(key: str, query: str, top: list[TopicHit], total: int, logged: dict[int, list[str]],
+                        videos: dict[str, Video]) -> str:
+    from app.ai import nemotron
     matches = [{"drive": (videos[h.video_id].drive if h.video_id in videos else None) or h.video_id,
                 "time": clock(h.start), "caption": h.caption, "logged_issues": logged.get(k, [])}
                for k, h in enumerate(top)]
@@ -347,8 +366,8 @@ async def search_answer(query: str, hits: list[TopicHit], logged: dict[int, list
         reply = await nemotron.chat_json([
             {"role": "system", "content": SEARCH_ANSWER_PROMPT},
             {"role": "user", "content": json.dumps({"search": query, "matches_shown": len(top),
-                                                    "matches_total": len(hits), "matches": matches})},
-        ], SearchAnswer, timeout=ANSWER_TIMEOUT_S)
+                                                    "matches_total": total, "matches": matches})},
+        ], SearchAnswer, timeout=ANSWER_BUDGET_S)
     except Exception as exc:
         log.warning("Search answer for %r skipped (%s)", query, config.redact(exc))
         return ""

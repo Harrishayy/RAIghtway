@@ -10,6 +10,7 @@ describe('footage search and ask parsing', () => {
     expect(full.hits[0]).toMatchObject({ start: 530, similarity: 0.34 });
     const bare = parse.topicSearch([{ video_id: 'v', start: 1, end: 2, score: 1, caption: 'x' }], 'q');
     expect(bare).toMatchObject({ query: 'q', answer: '', answer_source: null, logged: 0 });
+    expect(parse.topicSearch({ hits: [], answer_pending: true }, 'q').answer_pending).toBe(true);
     expect(bare.hits).toHaveLength(1);
     // an answer_source without text is no answer
     expect(parse.topicSearch({ hits: [], answer_source: 'nemotron', answer: '' }, 'q').answer_source).toBeNull();

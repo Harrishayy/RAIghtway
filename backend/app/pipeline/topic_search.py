@@ -130,11 +130,12 @@ async def search(query: str, videos: dict[str, Video], logged: list[IssueRecord]
     inside = logged_in(hits, list(logged))
     try:   # the answer is an extra: a missing or broken summaries module leaves it empty
         from app.ai import summaries
-        reply = await summaries.search_answer(q, hits, inside, videos)
+        reply, pending = await summaries.search_answer(q, hits, inside, videos)
     except Exception as exc:
         log.warning("Search answer unavailable (%s)", config.redact(exc))
-        reply = ""
+        reply, pending = "", False
     log.info("VSS topic search %r: %d segments -> %d bands, %d logged%s; answer %s", q, len(answer["results"]),
-             len(hits), len(inside), " (cached)" if answer.get("cached") else "", "nemotron" if reply else "none")
+             len(hits), len(inside), " (cached)" if answer.get("cached") else "", "nemotron" if reply else "pending" if pending else "none")
     return TopicSearch(query=q, hits=hits, synthesis=answer.get("synthesis", ""), answer=reply,
-                       answer_source="nemotron" if reply else None, logged=len(inside), cached=bool(answer.get("cached")))
+                       answer_source="nemotron" if reply else None, answer_pending=pending, logged=len(inside),
+                       cached=bool(answer.get("cached")))

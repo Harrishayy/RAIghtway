@@ -26,6 +26,7 @@ from app.pipeline import precompute
 
 log = logging.getLogger(__name__)
 MAX_SEGMENTS = 6                      # 30 s of footage: enough to see pins land, short enough for a demo
+RECHECK_LEAD_S = 10.0                 # a re-check starts this far before the reviewed finding
 REFRESH_TIMEOUT_S = 45.0
 FFMPEG_TIMEOUT_S = 120
 SWEEP_FILE = gps.DATA_DIR / "sweep" / "results.jsonl"
@@ -115,7 +116,7 @@ def _join(parts: list[str], out: str) -> None:
 
 
 def _fetch(stretch: list[inventory.Segment], out: str) -> None:
-    work = Path(out).parent / "parts"
+    work = Path(out).parent / f"{Path(out).stem}.parts"      # per clip: `out` may sit in the shared uploads folder
     work.mkdir(parents=True, exist_ok=True)
     try:
         parts = []
@@ -128,36 +129,87 @@ def _fetch(stretch: list[inventory.Segment], out: str) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
-async def start(analyse):
-    """Pick and register one run. Returns (video, go): the caller schedules `go()`, which fetches the clip
-    and calls `analyse(video, path)` (main's live-analysis runner). Raises NothingToRun."""
+def rechecks(count: int, skip_drives: set[str], max_segments: int = MAX_SEGMENTS) -> list[list[inventory.Segment]]:
+    """Stretches of already-analysed footage to look at again: around the reviewed demo picks
+    (app/curation.json, best first), one per drive, skipping `skip_drives`."""
+    if count <= 0:
+        return []
+    from app import curation
+    by_drive: dict[str, list[inventory.Segment]] = {}
+    for s in inventory.load():
+        by_drive.setdefault(s.drive, []).append(s)
+    out: list[list[inventory.Segment]] = []
+    for issue_id, _ in sorted(curation._load()[0].items(), key=lambda kv: kv[1]):
+        issue = store.get_issue(issue_id)
+        video = issue and store.get_video(issue.video_id)
+        if not video or video.source != "corpus" or not video.drive or video.drive in skip_drives:
+            continue
+        at = video.start_s + issue.t - RECHECK_LEAD_S       # start a little before the finding
+        segments = sorted((s for s in by_drive.get(video.drive, []) if s.t_start + s.duration > at),
+                          key=lambda s: s.t_start)
+        stretch: list[inventory.Segment] = []
+        for s in segments:
+            if len(stretch) >= max_segments or (stretch and abs(s.t_start - stretch[-1].t_start - stretch[-1].duration) > 0.5):
+                break
+            stretch.append(s)
+        if stretch:
+            out.append(stretch)
+            skip_drives = skip_drives | {video.drive}
+        if len(out) >= count:
+            break
+    return out
+
+
+async def start(analyse, clips: int | None = None):
+    """Pick and register one Run of up to `clips` clips (default RUN_CLIPS): the next unanalysed stretch if
+    there is one, then re-checks of analysed demo stretches on other drives. All are registered at once
+    (queued), then `go()` fetches and analyses them one after another, so each runs at full speed.
+
+    Re-checks are registered as uploads: they dedupe against corpus history (their findings land as
+    re-sightings) but never become history themselves, and an admin reset hides them after rehearsals.
+    Returns (first video, go). Raises NothingToRun only when there is nothing at all to look at."""
     if _lock.locked():
         raise RuntimeError("A run is already starting")
+    clips = max(1, min(int(clips or config.RUN_CLIPS), 5))
     async with _lock:
         await asyncio.to_thread(refresh_inventory)
-        stretch = await asyncio.to_thread(pick)
-        drive, start_s = stretch[0].drive, stretch[0].t_start
-        duration = round(stretch[-1].t_start + stretch[-1].duration - start_s, 3)
-        id = str(uuid4())
-        filename = f"{drive.replace('/', '_')}_t{int(start_s):04d}.mp4"
-        video = VideoRecord(id=id, filename=filename, source="corpus", status="queued", progress=0,
-                            stage="fetching from VAST", drive=drive, start_s=start_s, duration_s=duration,
-                            created_at=datetime.now(timezone.utc))
-        await asyncio.to_thread(store.add_video, video)
-        log.info("Run %s: %s from %.0f s, %d segments", id, drive, start_s, len(stretch))
+        try:
+            fresh = [await asyncio.to_thread(pick)]
+        except NothingToRun:
+            fresh = []
+        again = await asyncio.to_thread(rechecks, clips - len(fresh), {s[0].drive for s in fresh})
+        if not fresh and not again:
+            raise NothingToRun("Nothing new in the VAST index, and no reviewed stretches to re-check")
+        jobs = []
+        for stretch, kind in [(s, "new") for s in fresh] + [(s, "recheck") for s in again]:
+            drive, start_s = stretch[0].drive, stretch[0].t_start
+            duration = round(stretch[-1].t_start + stretch[-1].duration - start_s, 3)
+            video = VideoRecord(
+                id=str(uuid4()), filename=f"{drive.replace('/', '_')}_t{int(start_s):04d}.mp4",
+                source="corpus" if kind == "new" else "upload", run_kind=kind, status="queued", progress=0,
+                stage="fetching from VAST", drive=drive, start_s=start_s, duration_s=duration,
+                created_at=datetime.now(timezone.utc))
+            await asyncio.to_thread(store.add_video, video)
+            jobs.append((video, stretch))
+            log.info("Run %s (%s): %s from %.0f s, %d segments", video.id, kind, drive, start_s, len(stretch))
 
-    async def go() -> None:
-        path = Path(config.STATE_DIR) / "runs" / id / "clip.mp4"
+    async def one(video: VideoRecord, stretch: list[inventory.Segment]) -> None:
+        # Written where GET /api/videos/{id}/file looks, so the console can play the clip.
+        path = Path(config.STATE_DIR) / ("uploads" if video.source == "upload" else "videos") / f"{video.id}.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             await asyncio.to_thread(_fetch, stretch, str(path))
         except Exception as exc:
-            await asyncio.to_thread(store.set_progress, id, status="failed",
+            await asyncio.to_thread(store.set_progress, video.id, status="failed",
                                     stage=f"Fetching from VAST failed: {config.redact(exc)}")
             return
         await analyse(video, str(path))
-        finished = await asyncio.to_thread(store.get_video, id)
-        if finished and finished.status == "done":
+        finished = await asyncio.to_thread(store.get_video, video.id)
+        if video.run_kind == "new" and finished and finished.status == "done":
             await asyncio.to_thread(_mark_done, [s.segment_id for s in stretch])
 
-    return video, go
+    async def go() -> None:
+        for video, stretch in jobs:
+            await one(video, stretch)
+
+    return jobs[0][0], go

@@ -166,7 +166,9 @@ export function useUpdateIssue() {
 /** The footage search (VSS hits, VSS synthesis, Nemotron's answer). The query is lower-cased like the backend's cache key. */
 export function useTopic(query: string) {
   const c = useClient(); const q = query.trim().replace(/\s+/g, ' ').toLowerCase();
-  return useQuery({ queryKey: keys.topic(q), queryFn: ({ signal }) => c.searchFootage(q, signal), enabled: c.capabilities.topicSearch && q.length > 2, staleTime: 5 * 60_000 });
+  return useQuery({ queryKey: keys.topic(q), queryFn: ({ signal }) => c.searchFootage(q, signal), enabled: c.capabilities.topicSearch && q.length > 2, staleTime: 5 * 60_000,
+    // Nemotron's answer can outlast the request; the backend finishes it in the background, so ask again until it lands
+    refetchInterval: query => (query.state.data?.answer_pending && query.state.dataUpdateCount < 12 ? 4000 : false) });
 }
 /** Ask what happened on a drive (VSS evidence, Nemotron answer). Errors stay on the mutation for the panel to show. */
 export function useAsk() {

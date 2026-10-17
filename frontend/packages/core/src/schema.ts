@@ -49,6 +49,7 @@ export const VideoSchema = z.looseObject({
   drive: z.string().nullable().catch(null).default(null), start_s: num(0), duration_s: num(0),
   explanation: z.string().nullable().catch(null).default(null), issue_ids: z.array(z.coerce.string()).catch([]),
   explanation_source: z.enum(['nemotron', 'template']).nullable().optional().catch(undefined),
+  run_kind: z.enum(['new', 'recheck']).nullable().optional().catch(undefined),
   track: z.array(latLon).catch([]),
   camera_id: z.string().optional().catch(undefined), video_url: z.string().nullable().optional().catch(undefined),
   gps: z.array(TrackPoint).optional().catch(undefined), recorded_at: z.string().nullable().optional().catch(undefined),
@@ -255,7 +256,7 @@ export const parse = {
     const o = (Array.isArray(raw) ? {} : raw ?? {}) as Record<string, unknown>;
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
     return { query: text(o.query) || query, hits: parse.topicHits(raw), search: o.search === 'vss' ? 'vss' : undefined,
-      synthesis: text(o.synthesis), answer: text(o.answer), answer_source: o.answer_source === 'nemotron' && text(o.answer) ? 'nemotron' : null,
+      synthesis: text(o.synthesis), answer: text(o.answer), answer_source: o.answer_source === 'nemotron' && text(o.answer) ? 'nemotron' : null, answer_pending: o.answer_pending === true,
       logged: Number.isFinite(Number(o.logged)) ? Number(o.logged) : 0 };
   },
   askAnswer: (raw: unknown): AskAnswer => {

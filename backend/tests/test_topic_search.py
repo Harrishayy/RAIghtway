@@ -168,7 +168,7 @@ def test_logged_issues_inside_bands_feed_the_answer(monkeypatch, segments):
 
     async def answer(q, hits, logged, videos):
         made.append(logged)
-        return "Cracks on set01 at 00:20; already logged."
+        return "Cracks on set01 at 00:20; already logged.", False
     monkeypatch.setattr(summaries, "search_answer", answer)
     monkeypatch.setattr(vss_client, "search_full", lambda q, **k: {"results": [hit("a1"), hit("a9")], "synthesis": "", "cached": True})
     logged = [IssueRecord(id="i1", video_id="corpus-set01-video_0001", t=26.0, category="pavement", severity=4, confidence=0.9,
@@ -178,11 +178,11 @@ def test_logged_issues_inside_bands_feed_the_answer(monkeypatch, segments):
     assert made == [{0: ["pavement severity 4: Deep crack"]}]        # 26 s is within 2 s of the 20-25 s band
     assert (out.logged, out.answer_source, out.answer) == (1, "nemotron", "Cracks on set01 at 00:20; already logged.")
 
-    async def silent(*a):
-        return ""
-    monkeypatch.setattr(summaries, "search_answer", silent)
+    async def pending(*a):
+        return "", True
+    monkeypatch.setattr(summaries, "search_answer", pending)
     out = asyncio.run(topic_search.search("cracked road", listed(video("set01/video_0001"))))
-    assert (out.answer, out.answer_source, len(out.hits)) == ("", None, 2)
+    assert (out.answer, out.answer_source, out.answer_pending, len(out.hits)) == ("", None, True, 2)
 
 
 def test_ask_route_codes(monkeypatch):

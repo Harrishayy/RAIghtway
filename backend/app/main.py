@@ -253,12 +253,18 @@ async def upload_video(file: UploadFile = File(...)):
     return _video(video)
 
 
+class RunRequest(BaseModel):
+    clips: Annotated[int, Field(ge=1, le=5)] | None = None   # default RUN_CLIPS (3)
+
+
 @app.post("/api/run", response_model=Video)
-async def run_next():
-    """Analyse the next stretch of footage the VAST index has and we haven't seen, live (app/pipeline/run.py)."""
+async def run_next(body: RunRequest | None = None):
+    """Analyse footage live (app/pipeline/run.py): the next stretch the VAST index has that we haven't seen,
+    then re-checks of reviewed stretches on other drives, up to `clips` clips, one after another.
+    Returns the first clip; the rest are listed as queued."""
     run = importlib.import_module("app.pipeline.run")
     try:
-        video, go = await run.start(_run_analysis)
+        video, go = await run.start(_run_analysis, (body or RunRequest()).clips)
     except run.NothingToRun as exc:
         raise HTTPException(409, str(exc)) from None
     except RuntimeError as exc:

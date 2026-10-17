@@ -280,6 +280,7 @@ class Video(BaseModel):
     drive: str | None = None; start_s: float = 0; duration_s: float = 0   # drive e.g. "set04/video_0008"
     explanation: str | None = None; issue_ids: list[str] = []; track: list[tuple[float, float]] = []
     explanation_source: Literal["nemotron", "template"] | None = None   # template: Nemotron failed; a regenerated summary is served from state/explanations.json
+    run_kind: Literal["new", "recheck"] | None = None    # Run clips: never-analysed footage, or a re-check of analysed footage
 class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[str, int]; crews: dict[Crew, int]; rationale: str
     # optional detail (older reports lack it; figures come from code, Nemotron writes prose only):
     model: str | None                                  # display name of the model that wrote the prose
@@ -327,7 +328,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | Endpoint | Returns |
 |---|---|
 | `POST /api/videos` (multipart, one file; the UI loops for several) | `Video`; analysis starts |
-| `POST /api/run` | `Video`; re-reads the VAST index, picks up to 30 s of footage no pass has analysed (held-back demo segments first) and analyses it live. 409 when there is nothing new |
+| `POST /api/run` `{clips?}` | `Video` (the first clip); re-reads the VAST index and analyses up to `clips` (default `RUN_CLIPS` = 3) 30 s clips live, one after another: the next footage no pass has analysed (held-back demo segments first, `run_kind: "new"`), then re-checks of the reviewed demo stretches on other drives (`run_kind: "recheck"`, registered as uploads so they dedupe against history but never become it, and an admin reset hides them). The rest are listed as queued. 409 only when there is nothing at all to look at |
 | `GET /api/videos` | `Video[]`, including live progress and stage (polled) |
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |

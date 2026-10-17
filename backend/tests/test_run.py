@@ -46,3 +46,40 @@ def test_nothing_new_raises(world):
     state["pre"] = {s.segment_id for s in segments}
     with pytest.raises(run.NothingToRun):
         run.pick()
+
+
+def _corpus(monkeypatch, picks):
+    """Stub the store and curation: picks is {issue_id: (rank, drive, t)}."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from app import curation, store
+    monkeypatch.setattr(curation, "_load", lambda: ({i: r for i, (r, _, _) in picks.items()}, {}))
+    monkeypatch.setattr(store, "get_issue", lambda i: SimpleNamespace(video_id=f"corpus-{picks[i][1]}", t=picks[i][2])
+                        if i in picks else None)
+    monkeypatch.setattr(store, "get_video", lambda v: SimpleNamespace(source="corpus", drive=v.removeprefix("corpus-"),
+                                                                       start_s=0.0, created_at=datetime.now(timezone.utc)))
+
+
+def test_rechecks_follow_the_reviewed_picks_one_per_drive(world, monkeypatch):
+    _corpus(monkeypatch, {"a": (1, "set01/video_0001", 22.0), "b": (2, "set01/video_0001", 40.0),
+                          "c": (3, "set04/video_0008", 330.0)})
+    stretches = run.rechecks(2, set())
+    assert [(s[0].drive, s[0].t_start) for s in stretches] == [("set01/video_0001", 10), ("set04/video_0008", 320)]
+    assert len(stretches[0]) == 6 and len(stretches[1]) == 5          # set04 runs out at 340
+    assert run.rechecks(2, {"set01/video_0001"})[0][0].drive == "set04/video_0008"
+
+
+def test_start_queues_new_footage_then_rechecks(world, monkeypatch):
+    import asyncio
+    from app import store
+    segments, state = world
+    state["sweep"] = {s.segment_id for s in segments}
+    state["held"] = {s.segment_id for s in segments if s.drive == "set04/video_0008"}
+    _corpus(monkeypatch, {"a": (1, "set04/video_0008", 330.0), "b": (2, "set01/video_0001", 22.0)})
+    added = []
+    monkeypatch.setattr(store, "add_video", added.append)
+    monkeypatch.setattr(run, "refresh_inventory", lambda: True)
+    first, _ = asyncio.run(run.start(lambda *a: None, clips=3))
+    assert [(v.run_kind, v.source, v.drive) for v in added] == [("new", "corpus", "set04/video_0008"),
+                                                                 ("recheck", "upload", "set01/video_0001")]
+    assert first is added[0] and all(v.status == "queued" for v in added)

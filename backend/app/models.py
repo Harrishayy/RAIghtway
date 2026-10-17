@@ -74,6 +74,7 @@ class Video(BaseModel):
     duration_s: float = 0
     explanation: str | None = None
     explanation_source: Literal["nemotron", "template"] | None = None   # who wrote it; template = Nemotron failed
+    run_kind: Literal["new", "recheck"] | None = None   # Run clips: footage never analysed, or a re-check of analysed footage
     issue_ids: list[str] = []
     track: list[tuple[float, float]] = []
 
@@ -94,6 +95,7 @@ class TopicSearch(BaseModel):                         # POST /api/search
     synthesis: str = ""                               # VSS's own LLM answer over its top clips
     answer: str = ""                                  # Nemotron's answer from the hits and the issues logged there
     answer_source: Literal["nemotron"] | None = None  # None: no answer (VSS synthesis only)
+    answer_pending: bool = False                      # Nemotron is still writing it; search again shortly to get it
     logged: int = 0                                   # matches that overlap an issue already logged
     cached: bool = False
 

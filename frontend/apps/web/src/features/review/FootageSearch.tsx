@@ -43,6 +43,7 @@ export function FootageSearch() {
           <span className="topic-src" title="Matches come from the VAST DataEngine video search index">VSS</span>
         </div>
       ) : tooShort ? <div className="topic-sum"><span>Type at least 3 characters</span></div> : null}
+      {topic && !answer && result?.answer_pending && !found.isError ? <p className="topic-answer muted" role="status">Nemotron is reading the matches…</p> : null}
       {topic && answer && !found.isError ? (
         <p className="topic-answer" title={answer}>
           {answer}
