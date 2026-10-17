@@ -11,9 +11,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = Path(os.environ.get("CITYMAINT_STATE_DIR") or BACKEND_DIR / "state")
 
 
-def _team_config() -> dict[str, str]:
-    path = os.environ.get("TEAM_CONFIG_FILE")
-    paths = [path] if path else sorted(glob.glob("/config/team-*.config"))
+def _read_env_files(paths) -> dict[str, str]:
     values: dict[str, str] = {}
     for p in paths:
         try:
@@ -25,6 +23,12 @@ def _team_config() -> dict[str, str]:
         except OSError:
             pass
     return values
+
+
+def _team_config() -> dict[str, str]:
+    path = os.environ.get("TEAM_CONFIG_FILE")
+    # backend/.env (gitignored) holds our own keys, e.g. NVIDIA_API_KEY; it wins over the team file.
+    return _read_env_files([BACKEND_DIR / ".env", *([path] if path else sorted(glob.glob("/config/team-*.config")))])
 
 
 def _backend_secret() -> tuple[str | None, dict]:

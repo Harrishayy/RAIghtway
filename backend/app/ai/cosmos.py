@@ -45,7 +45,7 @@ async def _request(content: list[dict]) -> str:
         response = await gpu.client().post(config.COSMOS3_REASON_URL.rstrip("/") + "/v1/chat/completions",
             json={"model": config.COSMOS3_REASON_MODEL,
                   "messages": [{"role": "user", "content": content}],
-                  "temperature": 0.2, "max_tokens": 1000})
+                  "temperature": 0.0, "max_tokens": 1000})   # 0: rehearsal and live demo see the same findings
         response.raise_for_status()
     message = response.json()["choices"][0]["message"]
     content = message.get("content")
@@ -146,6 +146,9 @@ def _jpeg_size(data: bytes) -> tuple[int, int]:
 
 
 def _normalise_box(coords, dimensions: tuple[int, int] | None, space: str = BOX_COORDS) -> BBox:
+    # Cosmos sometimes answers corner pairs [[x1, y1], [x2, y2]] instead of a flat list.
+    if isinstance(coords, list) and len(coords) == 2 and all(isinstance(p, list) and len(p) == 2 for p in coords):
+        coords = [*coords[0], *coords[1]]
     if not isinstance(coords, list) or len(coords) != 4:
         raise ValueError("Expected four box coordinates")
     values = [_number(value) for value in coords]
@@ -191,7 +194,8 @@ async def box(frame_path: str, category: str, description: str) -> BBox | None:
     try:
         raw = await _request(content)
         diagnostic["raw"] = raw
-        coords = _extract_json(raw, array=True)
+        # Tuple syntax "[(680, 731), (773, 791)]" (seen at gate 3) isn't JSON; read it as arrays.
+        coords = _extract_json(raw.replace("(", "[").replace(")", "]"), array=True)
         if coords is None:
             diagnostic["source"] = "cosmos"
             return None

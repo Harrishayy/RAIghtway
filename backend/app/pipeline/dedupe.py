@@ -22,8 +22,10 @@ except Exception as exc:
     log.warning("app.vast media/vector unavailable (%s)", config.redact(exc))
     media = vector = None
 
-DEDUPE_MODE = "vector"     # "vector": category + 35 m + cosine >= DEDUPE_SIM; "distance": category + 35 m only
-DEDUPE_SIM = 0.80          # placeholder until calibrated on the VM
+# "vector": category + 35 m + cosine >= DEDUPE_SIM; "distance": category + 35 m only.
+# Distance: on the VM, crop similarities between drives were 0.1-0.6, even for a same-category pothole 19 m away.
+DEDUPE_MODE = "distance"
+DEDUPE_SIM = 0.80          # used only in "vector" mode
 RADIUS_M = 35.0
 
 

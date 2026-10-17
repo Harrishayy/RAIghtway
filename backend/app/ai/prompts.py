@@ -24,7 +24,8 @@ FIND_PROMPT = """You are inspecting a 5-second dashcam clip for street-maintenan
 Most clips contain NO defects. An empty issues list is the normal, expected answer.
 Report a defect only if you can clearly see it and could point to it in a frame.
 Do NOT report: vehicles, people, tram/streetcar tracks, normal road seams or patches in good
-condition, manhole covers, shadows, puddles, or road markings that are clearly visible.
+condition, manhole covers, shadows, puddles, road markings that are clearly visible, or signs
+that are intact but small, distant or seen at an angle.
 Categories (use exactly these names):
 - pavement: potholes, deep cracks, broken or crumbling road surface.
 - graffiti: unwanted paint or tagging on public surfaces.
