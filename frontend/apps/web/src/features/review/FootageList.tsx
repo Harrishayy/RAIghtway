@@ -25,7 +25,7 @@ export function FootageList() {
   const client = useClient(); const { topic, hits } = useFootageSearch();
   // VSS hits per drive, best first (the backend sends them ranked)
   const found = useMemo(() => { const m = new Map<string, TopicHit[]>(); (hits ?? []).forEach(h => m.set(h.video_id, [...(m.get(h.video_id) ?? []), h])); return m; }, [hits]);
-  const byVideo = useMemo(() => { const m = new Map<string, Issue[]>(); (issues.data ?? []).forEach(i => { if (cats.includes(i.category)) m.set(i.video_id, [...(m.get(i.video_id) ?? []), i]); }); return m; }, [issues.data, cats]);
+  const byVideo = useMemo(() => { const m = new Map<string, Issue[]>(); (issues.data ?? []).forEach(i => { if (cats.includes(i.category) && i.verdict !== 'rejected') m.set(i.video_id, [...(m.get(i.video_id) ?? []), i]); }); return m; }, [issues.data, cats]);
   const rows = useMemo(() => {
     // backends list in creation order, so a later index is a newer run
     const groups = new Map<string, Video[]>();

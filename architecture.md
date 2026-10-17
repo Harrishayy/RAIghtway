@@ -278,6 +278,11 @@ class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[s
     provenance: ReportProvenance | None                # report_model, find_model, rating_models {model: n}, unrated,
                                                        # rejected, sightings_total, canonical, duplicates_merged,
                                                        # with_embedding/gps/box, work_orders, template_work_orders, caveats
+    crew_plan: ReportCrewPlan | None                   # latest stored Plan summarised in code: solver, matrix_source, routes,
+                                                       # trucks, jobs, days [{day, jobs, trucks, drive_h, work_h, km,
+                                                       # back_first, back_last}], sites [{label, kind, trucks per crew, jobs}],
+                                                       # triage_model, today/later/deferred + decisions with reasons,
+                                                       # unassigned with reasons, note (Nemotron); None = no plan yet
 class ReportIssue:          id, category, severity, severity_reason, description, video_id, drive, t, lat, lon,
                             place (nearest street), sightings, confidence, deadline ("today"|"this week"|"this month"|
                             "routine"), crew, repair, minutes
@@ -301,6 +306,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |
 | `GET /api/issues/{id}/similar` | `SimilarIssue[]` (top 5) for the issue panel: VastDB vector search, with `distance` and which index answered (`search`) |
+| `POST /api/search` `{query}` | `{query, hits: [{video_id, start, end, score, similarity, caption}], search: "vss", synthesis, cached}`: plain-language footage search over the VSS index (`pie_cam-3`). Each VSS 5 s segment maps through the inventory to a listed corpus drive; touching segments merge into one band; weak hits (below 0.1, or 0.6 × the best) are dropped. `score` is the rank (1 = best), `similarity` the raw VSS score, `caption` the sentence of VSS's caption closest to the query, `synthesis` VSS's LLM answer over the top 3 clips. 422 on a query outside 3–200 characters; 503 when VSS is down or busy (no fallback). Cached per query in `state/vss_search_cache.json` |
 | `GET /api/frames/{issue_id}` | JPEG, from the VM disk cache, else VAST S3 (or the `frames` table in the fallback) |
 | `GET /api/report` | Latest `Report` (instant) |
 | `POST /api/report` | Regenerates the report → `Report` |

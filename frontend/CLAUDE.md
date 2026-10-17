@@ -48,7 +48,7 @@ styles/                       tokens.css → components.css → app.css
 
 | Screen (route) | Feature files | Client calls (backend endpoint) |
 |---|---|---|
-| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `run` (`POST /api/run`, the Footage pane's Run button), `searchTopic` (VSS, only when `capabilities.topicSearch`; off on the FastAPI backend) |
+| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `run` (`POST /api/run`, the Footage pane's Run button), `searchTopic` (`POST /api/search`, VSS, only when `capabilities.topicSearch`; `pnpm dev:live` and `.env.local` switch it on). The query lives in `state/ui.ts` (`topic`): `FootageSearch` in the Footage pane ranks drives by their matches, and the Timeline draws the open drive's matches as a clickable lane |
 | Issues | `features/issues/IssuesView` + `IssueCard` | `listIssues` (`/api/issues`), `similar` |
 | Report | `features/report/ReportView` | `getReport` / `regenerateReport` (`/api/report`) |
 | Dispatch | `features/dispatch/DispatchView`, `RoadsPanel` + `features/map` | `dispatch` (`POST /api/dispatch`), `hazards` (`/api/hazards`), `directions` (`POST /api/directions`) |
@@ -60,6 +60,7 @@ The demo is judged by VAST, NVIDIA and W&B people, and every backend integration
 
 - Dispatch prints `cuOpt` or `Fallback routing`, the solve time and `street times` when the matrix came from roads (`Plan.solver`, `solve_ms`, `matrix_source`).
 - The issue card's "Similar issues" label says `VastDB vector search` or `local index` (`Similar.search`), and each row shows its embedding distance.
+- Footage search is VSS only: the summary line carries a `VSS` tag, and a failed search says "VSS search is unavailable" with Retry. There is no local fallback to label.
 
 Keep these signals when you redesign a screen. Never label a fallback as the sponsor service, and never draw invented data on a real backend.
 

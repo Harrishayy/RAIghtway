@@ -1,8 +1,9 @@
 'use client';
-// Every issue, grouped by category. Each group is sorted (demo picks first, then severity, then confidence),
-// shows how many issues sit at each severity, and filters by severity on its own: the chips in a group's
-// header toggle levels for that group only; "Min severity" sets every group at once. The map and the card
-// follow the selection. Findings the severity rater judged not to be defects are hidden unless asked for.
+// Every issue, grouped by category. Filters, all visible at once: issue-type chips with counts (they follow the
+// top-bar preset until used), the rating verdict (confirmed by default; rejected = judged not a defect), search,
+// and severity per group: the chips in a group's header toggle levels for that group only, "Min severity" sets
+// every group at once. Each group sorts demo picks first, then severity, then confidence. The map and the card
+// follow the selection.
 import { useMemo, useState } from 'react';
 import { CATEGORY, CATEGORIES, SEVERITY, severityDef, type CategoryId, type Issue, type Severity } from '@raightway/core';
 import { useIssues } from '@/domain/queries';
@@ -17,7 +18,7 @@ import { IssueCard } from './IssueCard';
 import { useRouter } from 'next/navigation';
 
 type Sort = 'severity' | 'confidence' | 'sightings';
-type Show = 'open' | 'rejected' | 'all';
+type Show = 'confirmed' | 'rejected' | 'all';
 const LEVELS = SEVERITY.map(s => s.level);
 const ALL = new Set<Severity>(LEVELS);
 const atLeast = (n: number) => new Set<Severity>(LEVELS.filter(l => l >= n));
@@ -34,24 +35,35 @@ interface Group { id: CategoryId; all: Issue[]; shown: Issue[]; counts: number[]
 export function IssuesView() {
   const issues = useIssues(); const cats = useCategories(); const router = useRouter();
   const { selectedIssue, select, open } = usePlayback();
-  const [sort, setSort] = useState<Sort>('severity'); const [q, setQ] = useState(''); const [show, setShow] = useState<Show>('open');
+  const [sort, setSort] = useState<Sort>('severity'); const [q, setQ] = useState(''); const [show, setShow] = useState<Show>('confirmed');
+  // Categories shown on this page: follows the top-bar preset until the chips here are used.
+  const [picked, setPicked] = useState<Set<CategoryId> | null>(null);
+  const shownCats = useMemo(() => (picked ? CATEGORIES.map(c => c.id).filter(id => picked.has(id)) : cats), [picked, cats]);
   // Per-category severity levels shown; a category missing from the map shows every level.
   const [levels, setLevels] = useState<Partial<Record<CategoryId, Set<Severity>>>>({});
   const [closed, setClosed] = useState<Set<CategoryId>>(new Set());
-  const rejectedCount = useMemo(() => (issues.data ?? []).filter(i => !i.duplicate_of && i.verdict === 'rejected' && cats.includes(i.category)).length, [issues.data, cats]);
 
-  const groups = useMemo<Group[]>(() => {
+  // Canonical issues that pass the verdict filter and the search, before category and severity filters.
+  const { pool, verdicts } = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const base = (issues.data ?? []).filter(i => !i.duplicate_of && cats.includes(i.category)
-      && (show === 'all' || (show === 'rejected') === (i.verdict === 'rejected'))
+    const found = (issues.data ?? []).filter(i => !i.duplicate_of
       && (!needle || `${i.description} ${i.severity_reason ?? ''} ${i.place ?? ''} ${i.id}`.toLowerCase().includes(needle)));
-    return CATEGORIES.filter(c => cats.includes(c.id)).map(c => {
-      const all = base.filter(i => i.category === c.id).sort(SORTS[sort]);
-      const lv = levels[c.id] ?? ALL; const counts = [0, 0, 0, 0, 0];
-      all.forEach(i => { counts[i.severity - 1]!++; });
-      return { id: c.id, all, shown: all.filter(i => lv.has(i.severity)), counts, levels: lv };
-    }).filter(g => g.all.length);
-  }, [issues.data, cats, show, q, sort, levels]);
+    const verdicts = { confirmed: found.filter(i => i.verdict !== 'rejected').length, rejected: found.filter(i => i.verdict === 'rejected').length, all: found.length };
+    return { pool: found.filter(i => show === 'all' || (show === 'rejected') === (i.verdict === 'rejected')), verdicts };
+  }, [issues.data, q, show]);
+  const perCat = useMemo(() => { const m = new Map<CategoryId, number>(); pool.forEach(i => m.set(i.category, (m.get(i.category) ?? 0) + 1)); return m; }, [pool]);
+
+  const groups = useMemo<Group[]>(() => CATEGORIES.filter(c => shownCats.includes(c.id)).map(c => {
+    const all = pool.filter(i => i.category === c.id).sort(SORTS[sort]);
+    const lv = levels[c.id] ?? ALL; const counts = [0, 0, 0, 0, 0];
+    all.forEach(i => { counts[i.severity - 1]!++; });
+    return { id: c.id, all, shown: all.filter(i => lv.has(i.severity)), counts, levels: lv };
+  }).filter(g => g.all.length), [pool, shownCats, sort, levels]);
+  const toggleCat = (id: CategoryId) => setPicked(prev => {
+    const next = new Set(prev ?? shownCats);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next.size ? next : new Set(CATEGORIES.map(c => c.id));   // none selected reads as all
+  });
 
   const visible = useMemo(() => groups.flatMap(g => (closed.has(g.id) ? [] : g.shown)), [groups, closed]);
   const total = groups.reduce((n, g) => n + g.shown.length, 0);
@@ -60,9 +72,9 @@ export function IssuesView() {
 
   // "Min severity" reads as pressed only while every group uses that same threshold.
   const minSev = useMemo(() => {
-    const sets = CATEGORIES.filter(c => cats.includes(c.id)).map(c => levels[c.id] ?? ALL);
+    const sets = shownCats.map(c => levels[c] ?? ALL);
     return LEVELS.find(n => sets.every(s => sameSet(s, atLeast(n)))) ?? -1;
-  }, [levels, cats]);
+  }, [levels, shownCats]);
   const setAll = (n: number) => setLevels(Object.fromEntries(CATEGORIES.map(c => [c.id, atLeast(n)])) as Record<CategoryId, Set<Severity>>);
   const toggleLevel = (cat: CategoryId, level: Severity) => setLevels(prev => {
     const next = new Set(prev[cat] ?? ALL);
@@ -75,15 +87,23 @@ export function IssuesView() {
   return (
     <div className="split">
       <section className="card split-main" aria-label="Issues">
-        <div className="toolbar">
+        <div className="toolbar issues-bar">
           <label className="search search-in"><span className="sr">Search issues</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search description, reason, street, id" /></label>
+          <Seg label="Verdict from the severity rating" size="sm" value={show} onChange={setShow} options={[{ value: 'confirmed', label: `Confirmed ${verdicts.confirmed}` }, { value: 'rejected', label: `Rejected ${verdicts.rejected}` }, { value: 'all', label: `All ${verdicts.all}` }]} />
+          <div className="cat-chips" role="group" aria-label="Issue types shown">
+            {CATEGORIES.map(c => (
+              <button key={c.id} type="button" className="cat-chip" data-cat={c.id} aria-pressed={shownCats.includes(c.id)} onClick={() => toggleCat(c.id)} title={`${c.label}: ${perCat.get(c.id) ?? 0}`}>
+                <CategoryLabel id={c.id} compact /><span className="num">{perCat.get(c.id) ?? 0}</span>
+              </button>
+            ))}
+            {picked ? <button type="button" className="link small" onClick={() => setPicked(null)}>Follow top bar</button> : null}
+          </div>
           <Seg label="Minimum severity in every category" size="sm" value={minSev} onChange={setAll} options={SEVERITY.map(s => ({ value: s.level as number, label: s.level === 1 ? 'All' : `S${s.level}+` }))} />
           <Seg label="Sort within each category" size="sm" value={sort} onChange={setSort} options={[{ value: 'severity', label: 'Severity' }, { value: 'confidence', label: 'Confidence' }, { value: 'sightings', label: 'Seen' }]} />
-          {rejectedCount || show !== 'open' ? <Seg label="Which findings" size="sm" value={show} onChange={setShow} options={[{ value: 'open', label: 'Open' }, { value: 'rejected', label: `Not defects ${rejectedCount}` }, { value: 'all', label: 'All' }]} /> : null}
-          <span className="label num">{total} {show === 'rejected' ? 'flagged' : 'open'}</span>
+          <span className="label num shown-n" aria-live="polite">{total} of {pool.length} shown</span>
         </div>
         <div className="scroll">
-          {issues.isPending ? <Loading rows={8} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : !groups.length ? <Empty title="No issues match">{show === 'rejected' ? 'Nothing was judged a false positive.' : 'Loosen the filters or switch the category preset.'}</Empty> : (
+          {issues.isPending ? <Loading rows={8} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : !groups.length ? <Empty title="No issues match">{show === 'rejected' && !verdicts.rejected ? 'Nothing was judged a false positive.' : 'Loosen the filters or pick more issue types.'}</Empty> : (
             <table className="moments issues-tbl grouped">
               <thead><tr><th>Sev</th><th className="d">Finding and why it got that grade</th><th className="seen-c">Seen</th><th className="seen-c">Conf.</th></tr></thead>
               {groups.map(g => {

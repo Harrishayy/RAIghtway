@@ -84,6 +84,15 @@ export const ReportProvenanceSchema = z.object({
   sightings_total: num(0), canonical: num(0), duplicates_merged: num(0), with_embedding: num(0), with_gps: num(0),
   with_box: num(0), work_orders: num(0), template_work_orders: num(0), caveats: z.array(z.coerce.string()).catch([]),
 });
+const ReportTriageItemSchema = z.object({ issue_id: z.coerce.string(), crew: str(), severity: num(0), decision: str(), reason: str(), by: str() });
+export const ReportCrewPlanSchema = z.object({
+  solver: str('fallback'), matrix_source: str('straight'), solve_ms: num(0), routes: num(0), trucks: num(0), jobs: num(0),
+  days: lenientList(z.object({ day: num(1), jobs: num(0), trucks: num(0), drive_h: num(0), work_h: num(0), km: nullableNum.optional(), back_first: nstr, back_last: nstr, solver: nstr })),
+  sites: lenientList(z.object({ id: z.coerce.string(), label: str(), kind: str('yard'), crews: z.array(z.coerce.string()).catch([]), trucks: countMap, routes: num(0), jobs: num(0), assumed: z.boolean().catch(false) })),
+  triage_model: nstr, triage_model_name: nstr, triage_rationale: nstr,
+  today: num(0), later: num(0), deferred: num(0), triage: lenientList(ReportTriageItemSchema),
+  unassigned: lenientList(ReportTriageItemSchema), unassigned_total: num(0), note: nstr,
+});
 export const ReportSchema = z.looseObject({
   generated_at: str(), summary: str(), counts: countMap, crews: countMap, rationale: str(),
   rationale_by_crew: z.record(z.string(), z.string()).optional().catch(undefined), model: z.string().nullable().optional().catch(undefined),
@@ -92,6 +101,7 @@ export const ReportSchema = z.looseObject({
   priorities: lenientList(ReportIssueSchema).optional(),
   hotspots: lenientList(ReportHotspotSchema).optional(),
   provenance: ReportProvenanceSchema.nullable().optional().catch(undefined),
+  crew_plan: ReportCrewPlanSchema.nullable().optional().catch(undefined),
 });
 const optStr = z.string().nullable().optional().catch(undefined);
 export const RouteWarningSchema = z.object({ hazard_id: z.coerce.string(), label: str(), source: z.enum(['city', 'dashcam']).catch('city'), avoided: z.boolean().catch(false) });

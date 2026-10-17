@@ -163,6 +163,61 @@ class ReportProvenance(BaseModel):
     caveats: list[str] = []
 
 
+class ReportSite(BaseModel):
+    """A site crews leave from in the latest plan, and how many trucks it sends."""
+    id: str
+    label: str
+    kind: str
+    crews: list[str] = []
+    trucks: dict[str, int] = {}                       # crew type -> trucks per day (the site's setting, else routes)
+    routes: int = 0                                   # routes in the plan that start here
+    jobs: int = 0
+    assumed: bool = False
+
+
+class ReportPlanDay(BaseModel):
+    day: int
+    jobs: int
+    trucks: int
+    drive_h: float = 0
+    work_h: float = 0
+    km: float | None = None
+    back_first: str | None = None                     # earliest and latest back-at-base clock time, "HH:MM"
+    back_last: str | None = None
+    solver: str | None = None
+
+
+class ReportTriageItem(BaseModel):
+    issue_id: str
+    crew: str
+    severity: int
+    decision: str                                     # "today", "later" or "defer"
+    reason: str
+    by: str                                           # "rule" or "model"
+
+
+class ReportCrewPlan(BaseModel):
+    """The latest stored dispatch plan, summarised: figures from code, the note from Nemotron."""
+    solver: str                                       # "cuopt" or "fallback"
+    matrix_source: str = "straight"                   # "road" (OSRM street times) or "straight"
+    solve_ms: int = 0
+    routes: int = 0
+    trucks: int = 0
+    jobs: int = 0
+    days: list[ReportPlanDay] = []
+    sites: list[ReportSite] = []
+    triage_model: str | None = None                   # "nemotron-…" or "rules"; None when the plan had no triage
+    triage_model_name: str | None = None
+    triage_rationale: str | None = None
+    today: int = 0
+    later: int = 0
+    deferred: int = 0
+    triage: list[ReportTriageItem] = []               # today first, then later, then deferred (capped)
+    unassigned: list[ReportTriageItem] = []           # routed out: issue, reason (decision "unassigned", by "solver")
+    unassigned_total: int = 0
+    note: str | None = None
+
+
 class Report(BaseModel):
     generated_at: datetime
     summary: str
@@ -176,6 +231,7 @@ class Report(BaseModel):
     priorities: list[ReportIssue] = []                # every open severity 4-5 issue, worst first
     hotspots: list[ReportHotspot] = []
     provenance: ReportProvenance | None = None
+    crew_plan: ReportCrewPlan | None = None            # None: no plan stored yet (plan routes on Dispatch)
 
 
 FacilityKind = Literal["transfer_station", "collection_yard", "road_yard", "cleaning_yard", "yard"]
@@ -297,16 +353,46 @@ class Triage(BaseModel):
 
 
 class PlanDay(BaseModel):
+    """Totals for one day of the plan, over every truck that went out."""
     day: int
     jobs: int
     trucks: int                                       # trucks with at least one stop
-    by_severity: dict[str, int] = {}
+    by_severity: dict[str, int] = {}                  # "1".."5" -> jobs done that day
     drive_min: int = 0
     work_min: int = 0
+    distance_km: float = 0
+    last_back_min: int = 0                            # latest back-at-base time that day, minutes from 08:00
     solver: Literal["cuopt", "fallback"] = "fallback"
 
 
+class PlanSite(BaseModel):
+    """A site the plan used, and the trucks it sent out per day by crew type."""
+    facility_id: str
+    label: str
+    kind: FacilityKind
+    trucks: dict[Crew, int]                           # per day
+    jobs: int = 0                                     # jobs routed from this site over the whole plan
+
+
 class Plan(BaseModel):
+    """A crew plan: cuOpt round trips from each site over one or more days, after a triage pass.
+
+    Fields for readers such as the report (names are stable; everything after matrix_source is optional
+    and absent from older plans):
+      solver, solve_ms, matrix_source   "cuopt" or "fallback" (nearest neighbour); "road" (OSRM) or "straight"
+      min_severity, horizon_days        the severity floor the user chose (1 = all) and the days planned
+      sites                             PlanSite per site used: trucks per crew type per day, jobs routed
+      triage                            Triage: model ("rules" when no model answered), model_name, rationale,
+                                        by_crew, capacity_min, clamped, decisions[] (issue_id, decision
+                                        today/later/defer, reason, by rule/model)
+      deferred                          issue ids triaged out of this horizon (reasons in triage.decisions)
+      days                              PlanDay per day: jobs, trucks, by_severity, drive_min, work_min,
+                                        distance_km, last_back_min, solver
+      routes[]                          one per truck per day: day, vehicle_id, facility_id, depot_label, stops,
+                                        schedule[] (depart/job/break/return lines), totals (ShiftTotals: jobs,
+                                        drive_min, work_min, break_min, idle_min, distance_km, back_min, lunch)
+      unassigned, unassigned_reasons    planned jobs no truck reached, and why
+    """
     routes: list[Route]
     unassigned: list[str]
     solver: Literal["cuopt", "fallback"]
@@ -316,6 +402,9 @@ class Plan(BaseModel):
     hazards: list[Hazard] = []
     matrix_source: Literal["road", "straight"] = "straight"
     # Multi-day round trips and triage (optional; older plans lack them).
+    min_severity: int | None = None
+    horizon_days: int | None = None
+    sites: list[PlanSite] = []
     days: list[PlanDay] = []
     triage: Triage | None = None
     deferred: list[str] = []                          # triaged out: not planned in this horizon (reasons in triage)

@@ -62,12 +62,17 @@ def test_template_report_has_code_facts(monkeypatch):
 
 
 def test_nemotron_writes_prose_only(monkeypatch):
+    from app.models import Plan, Route
     _world(monkeypatch, [issue("a", severity=5), issue("b", severity=4, lat=43.6501)])
+    monkeypatch.setattr(store, "latest_plan", lambda: Plan(
+        routes=[Route(crew_id="roads-1", crew="roads", stops=["a"], eta_min=[5], path=[])], unassigned=["b"],
+        solver="cuopt", solve_ms=10))
 
     async def model(facts):
         assert facts["open_issues"] == 2 and "pavement" in facts["categories"]
         return report._ReportReply(summary="Two hazards.", crews={"roads": 99}, rationale="Fix a first.",
-                                   sections={"pavement": "Patch a today."}, hotspots={"H1": "Two potholes."}), \
+                                   sections={"pavement": "Patch a today."}, hotspots={"H1": "Two potholes."},
+                                   crew_plan="One truck today."), \
             report.nemotron.ULTRA
     monkeypatch.setattr(report, "_nemotron", model)
     r = asyncio.run(report.regenerate())
@@ -75,6 +80,7 @@ def test_nemotron_writes_prose_only(monkeypatch):
     assert r.crews["roads"] <= 1 + 2                                               # clamped to baseline + 2
     assert r.sections[0].approach == "Patch a today." and r.hotspots[0].note == "Two potholes."
     assert r.stats.open == 2                                                       # numbers are not the model's
+    assert (r.crew_plan.note, r.crew_plan.jobs, r.crew_plan.unassigned_total) == ("One truck today.", 1, 1)
 
 
 def test_old_report_without_detail_still_validates():
@@ -82,3 +88,34 @@ def test_old_report_without_detail_still_validates():
            "crews": {"roads": 1}, "rationale": "r"}
     r = Report.model_validate(old)
     assert r.sections == [] and r.stats is None and r.provenance is None
+
+
+def test_crew_plan_summary_reads_new_and_old_plans():
+    from app.models import Facility, Plan, Route
+    assert report._crew_plan(None, {}) is None
+    yard = Facility(id="y1", label="Yard", kind="yard", crews=["roads"], lat=43.6, lon=-79.4, source="test")
+    old = Plan(routes=[Route(crew_id="roads-1", crew="roads", stops=["a", "b"], eta_min=[10, 40], path=[],
+                             facility_id="y1", distance_km=12.5)],
+               unassigned=["c"], unassigned_reasons={"c": "Shift full"}, solver="cuopt", solve_ms=3000,
+               facilities=[yard], matrix_source="road")
+    cp = report._crew_plan(old, {"c": 4}, {"a": 30, "b": 60})
+    assert (cp.solver, cp.matrix_source, cp.jobs, cp.trucks, cp.unassigned_total) == ("cuopt", "road", 2, 1, 1)
+    assert cp.days[0].jobs == 2 and cp.days[0].km == 12.5 and cp.triage_model is None
+    assert (cp.days[0].work_h, cp.days[0].drive_h) == (1.5, 0.2)              # drive = 40 - 30 min of work before
+    assert cp.sites[0].trucks == {"roads": 1} and cp.unassigned[0].reason == "Shift full"
+    assert cp.unassigned[0].severity == 4
+    # A newer plan, as a dict with the multi-day and triage fields.
+    new = {"routes": [{"crew_id": "roads-1/d1", "crew": "roads", "stops": ["a"], "day": 1, "vehicle_id": "roads-1",
+                       "facility_id": "y1", "totals": {"drive_min": 30, "work_min": 60, "back_min": 400,
+                                                       "distance_km": 9.0}},
+                      {"crew_id": "roads-1/d2", "crew": "roads", "stops": ["b"], "day": 2, "vehicle_id": "roads-1",
+                       "facility_id": "y1", "totals": {"drive_min": 20, "work_min": 45, "back_min": 300}}],
+           "unassigned": [], "solver": "fallback", "solve_ms": 5,
+           "facilities": [{"id": "y1", "label": "Yard", "kind": "road_yard", "crews": ["roads"], "vehicles": {"roads": 2}}],
+           "triage": {"model": "rules", "rationale": "r", "decisions": [
+               {"issue_id": "z", "crew": "roads", "severity": 2, "decision": "defer", "reason": "low", "by": "rule"},
+               {"issue_id": "a", "crew": "roads", "severity": 5, "decision": "today", "reason": "S5", "by": "rule"}]}}
+    cp = report._crew_plan(new, {})
+    assert [d.day for d in cp.days] == [1, 2] and cp.days[0].back_last == "14:40" and cp.days[0].drive_h == 0.5
+    assert (cp.today, cp.deferred, cp.triage[0].issue_id, cp.triage_model) == (1, 1, "a", "rules")
+    assert cp.sites[0].trucks == {"roads": 2} and cp.trucks == 1

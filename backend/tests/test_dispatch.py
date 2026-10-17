@@ -8,11 +8,24 @@ import pytest
 from app import config, store
 from app.ai.prompts import normalise_category
 from app.geo import roads
-from app.models import Hazard, IssueRecord
-from app.planning import cuopt, dispatch, hazards, paths
+from app.models import Facility, Hazard, IssueRecord
+from app.planning import cuopt, dispatch, facilities, hazards, paths
 
 COMMISSIONERS = (43.65198, -79.3393)
 INGRAM = (43.70066, -79.47131)
+ROAD_CREWS = ["roads", "graffiti", "markings", "signage", "inspection"]
+SITES = (
+    Facility(id="ts-commissioners", label="Commissioners", kind="transfer_station", crews=["sanitation"],
+             lat=COMMISSIONERS[0], lon=COMMISSIONERS[1], source="test", vehicles={"sanitation": 1}),
+    Facility(id="ts-ingram", label="Ingram", kind="transfer_station", crews=["sanitation"],
+             lat=INGRAM[0], lon=INGRAM[1], source="test", vehicles={"sanitation": 1}),
+    Facility(id="yard-east", label="East yard", kind="road_yard", crews=ROAD_CREWS, lat=43.6608, lon=-79.3402,
+             source="test", vehicles={"roads": 1, "inspection": 1}),
+    Facility(id="yard-west", label="West yard", kind="road_yard", crews=ROAD_CREWS, lat=43.6676, lon=-79.4398,
+             source="test", vehicles={"roads": 1}),
+    Facility(id="yard-north", label="North yard", kind="road_yard", crews=ROAD_CREWS, lat=43.7340, lon=-79.4650,
+             source="test"),
+)
 
 
 def issue(id, category, lat, lon, severity=3):
@@ -23,6 +36,7 @@ def issue(id, category, lat, lon, severity=3):
 
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
+    monkeypatch.setattr(facilities, "load", lambda: SITES)
     monkeypatch.setattr(config, "ROUTING_URL", "off")
     monkeypatch.setattr(config, "ROAD_RESTRICTIONS_URL", "off")
 
@@ -93,7 +107,9 @@ def test_plan_keeps_each_run_local(monkeypatch):
             assert route.maps_urls and route.brief and route.depot_label in route.brief
     san = {r.facility_id: r.stops for r in plan.routes if r.crew == "sanitation"}
     assert sorted(san["ts-commissioners"]) == ["e1", "e2"] and san["ts-ingram"] == ["w1"]
-    assert plan.unassigned == ["g1"] and "No crew" in plan.unassigned_reasons["g1"]
+    # No graffiti truck at any site: triage defers it, with the reason, instead of routing it.
+    assert plan.unassigned == [] and plan.deferred == ["g1"]
+    assert "No graffiti trucks" in next(d.reason for d in plan.triage.decisions if d.issue_id == "g1")
     assert {f.id for f in plan.facilities} >= {"ts-commissioners", "ts-ingram"}
     # The dashcam work zone is a road alert, but the crew sent to inspect it is not warned about it.
     assert any(h.id == "z1" and h.source == "dashcam" for h in plan.hazards)

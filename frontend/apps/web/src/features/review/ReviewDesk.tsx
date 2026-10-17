@@ -1,7 +1,7 @@
 'use client';
 // Review: footage, player + timeline + detections, and map + the selected issue, as movable panes.
 import { useEffect, useMemo } from 'react';
-import type { Issue } from '@raightway/core';
+import { isOpen, type Issue } from '@raightway/core';
 import { byTime, fixAt, landingIssue } from '@/domain/derive';
 import { useIssues, useVideo, useVideos } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
@@ -36,7 +36,8 @@ export function ReviewDesk() {
   useEffect(() => { const first = landingIssue(issues); if (!selectedIssue && first && detail.data?.video.id === videoId) { select(first.id); if (usePlayback.getState().t === 0) usePlayback.getState().seek(Math.max(0, first.t - 0.4)); } }, [selectedIssue, issues, select, detail.data, videoId]);
   const pool = useMemo(() => { const m = new Map<string, Issue>(); (allIssues.data ?? []).forEach(i => m.set(i.id, i)); issues.forEach(i => m.set(i.id, i)); return m; }, [allIssues.data, issues]);
   const selected = selectedIssue ? pool.get(selectedIssue) : null;
-  const mapIssues = useMemo(() => [...pool.values()].filter(i => cats.includes(i.category) && !i.duplicate_of), [pool, cats]);
+  // map pins: open issues only; findings the rating judged not to be defects stay off the map
+  const mapIssues = useMemo(() => [...pool.values()].filter(i => cats.includes(i.category) && isOpen(i)), [pool, cats]);
   const fix = fixAt(video, t);
 
   const playerBody = detail.isError ? <Failed error={detail.error} onRetry={() => void detail.refetch()} />

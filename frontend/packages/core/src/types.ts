@@ -112,6 +112,18 @@ export interface Report {
   priorities?: ReportIssue[];
   hotspots?: ReportHotspot[];
   provenance?: ReportProvenance | null;
+  /** The latest stored dispatch plan, summarised; null/absent = no plan yet. */
+  crew_plan?: ReportCrewPlan | null;
+}
+export interface ReportTriageItem { issue_id: string; crew: string; severity: number; decision: string; reason: string; by: string }
+export interface ReportCrewPlan {
+  solver: string; matrix_source: string; solve_ms: number; routes: number; trucks: number; jobs: number;
+  days: { day: number; jobs: number; trucks: number; drive_h: number; work_h: number; km?: number | null; back_first?: string | null; back_last?: string | null; solver?: string | null }[];
+  sites: { id: string; label: string; kind: string; crews: string[]; trucks: Record<string, number>; routes: number; jobs: number; assumed: boolean }[];
+  /** `nemotron-…` or `rules`; absent when the plan had no triage. */
+  triage_model?: string | null; triage_model_name?: string | null; triage_rationale?: string | null;
+  today: number; later: number; deferred: number; triage: ReportTriageItem[];
+  unassigned: ReportTriageItem[]; unassigned_total: number; note?: string | null;
 }
 export type Deadline = 'today' | 'this week' | 'this month' | 'routine';
 /** One finding as the report lists it. */

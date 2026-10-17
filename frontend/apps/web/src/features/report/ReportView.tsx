@@ -5,7 +5,7 @@
 // never overstates itself. A report from before the detail sections still renders: summary, matrix, crews.
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { CATEGORIES, CATEGORY, CREW_FOR, SEVERITY, fmtCoord, fmtHours, fmtTimecode, plural, raterDef, summarizeIssues, type Issue, type Report, type ReportIssue, type ReportProvenance, type ReportSection, type Severity } from '@raightway/core';
+import { CATEGORIES, CATEGORY, CREW_FOR, SEVERITY, fmtCoord, fmtHours, fmtTimecode, plural, raterDef, summarizeIssues, type Issue, type Report, type ReportCrewPlan, type ReportIssue, type ReportProvenance, type ReportSection, type Severity } from '@raightway/core';
 import { useClient } from '@/domain/client';
 import { useIssues, useRegenerateReport, useReport } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
@@ -115,6 +115,7 @@ export function ReportView() {
         <section className="card pad wide" aria-label="Crew rationale"><div className="comp-h"><h2>Crews and why</h2><span className="label">baseline = workload × 1.3 ÷ 8 h</span></div><RichText className="note" text={r.rationale} /></section>
       ) : null}
 
+      {r?.stats ? <CrewPlan plan={r.crew_plan ?? null} /> : null}
       {r?.provenance ? <Provenance p={r.provenance} /> : null}
     </div>
   );
@@ -160,6 +161,62 @@ function Section({ s, frame, onOpen }: { s: ReportSection; frame: (r: ReportIssu
             </button></li>
           ))}</ul>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+const DECISION: Record<string, ['failed' | 'hold' | 'neutral' | 'info', string]> = {
+  today: ['failed', 'Today'], later: ['hold', 'Later'], defer: ['neutral', 'Deferred'], unassigned: ['neutral', 'Unassigned'],
+};
+const siteKind = (k: string) => k.replace(/_/g, ' ');
+
+/** The latest dispatch plan, as the report states it: sites, trucks, triage, days and what was left out. */
+function CrewPlan({ plan }: { plan: ReportCrewPlan | null }) {
+  if (!plan) return (
+    <section className="card pad wide" aria-label="Crew plan"><div className="comp-h"><h2>Crew plan</h2></div>
+      <Empty title="No crew plan yet">Plan routes on Dispatch; the next report summarises them here.</Empty></section>
+  );
+  const triager = raterDef(plan.triage_model);
+  const items = [...plan.triage, ...plan.unassigned];
+  return (
+    <section className="card pad wide report-plan" aria-label="Crew plan">
+      <div className="comp-h"><h2>Crew plan</h2>
+        <span className="row"><Chip tone={plan.solver === 'cuopt' ? 'done' : 'hold'} plain>{plan.solver === 'cuopt' ? 'cuOpt' : 'Fallback routing'}</Chip><span className="label">{plan.matrix_source === 'road' ? 'street times' : 'straight-line times'}</span></span>
+      </div>
+      <p className="num muted plan-line">{plural(plan.jobs, 'job')} on {plural(plan.routes, 'route')} · {plural(plan.trucks, 'truck')} · {plural(plan.days.length || 1, 'day')}{plan.unassigned_total ? ` · ${plan.unassigned_total} unassigned` : ''}</p>
+      {plan.note ? <RichText className="note sec-approach" text={plan.note} /> : null}
+      <div className="sec-grid">
+        <div className="sec-facts">
+          {plan.days.length ? (<>
+            <div className="label">By day</div>
+            <div className="matrix-wrap"><table className="moments plan-days">
+              <thead><tr><th>Day</th><th className="num">Jobs</th><th className="num">Trucks</th><th className="num">Drive h</th><th className="num">Work h</th><th className="num">km</th><th>Back</th></tr></thead>
+              <tbody>{plan.days.map(d => (
+                <tr key={d.day}><td>Day {d.day}</td><td className="num">{d.jobs}</td><td className="num">{d.trucks}</td><td className="num">{d.drive_h.toFixed(1)}</td><td className="num">{d.work_h.toFixed(1)}</td><td className="num">{d.km != null ? d.km.toFixed(0) : '·'}</td><td className="mono small">{d.back_first && d.back_last ? (d.back_first === d.back_last ? d.back_last : `${d.back_first}–${d.back_last}`) : '·'}</td></tr>
+              ))}</tbody>
+            </table></div>
+          </>) : null}
+          {plan.sites.length ? (<>
+            <div className="label">Sites in use</div>
+            <ul className="plan-sites">{plan.sites.map(x => (
+              <li key={x.id}><span className="two"><b>{x.label}</b><span className="muted small">{siteKind(x.kind)}{x.assumed ? ' · assumed location' : ''}</span></span>
+                <span className="muted small num">{Object.entries(x.trucks).map(([c, n]) => `${n} ${c}`).join(' · ') || '·'}/day · {plural(x.jobs, 'job')}</span></li>
+            ))}</ul>
+          </>) : null}
+        </div>
+        <div className="sec-facts">
+          <div className="label">{plan.triage_model ? <>Triage by {plan.triage_model_name ?? triager?.name ?? plan.triage_model} · {plan.today} today · {plan.later} later · {plan.deferred} deferred</> : 'What was left out'}</div>
+          {plan.triage_rationale ? <RichText className="note" text={plan.triage_rationale} /> : null}
+          {items.length ? (
+            <ul className="plan-tri">{items.map(t => (
+              <li key={`${t.decision}-${t.issue_id}`}>
+                <Chip tone={(DECISION[t.decision] ?? DECISION.defer!)[0]} plain>{(DECISION[t.decision] ?? [null, t.decision])[1]}</Chip>
+                <span className="two"><span className="mono small">{t.issue_id}{t.severity ? ` · S${t.severity}` : ''}{t.by ? ` · ${t.by === 'model' ? 'model' : t.by === 'rule' ? 'rule' : t.by}` : ''}</span><span className="muted">{t.reason}</span></span>
+              </li>
+            ))}</ul>
+          ) : <p className="note">Every planned job was routed.</p>}
+        </div>
       </div>
     </section>
   );

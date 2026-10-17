@@ -387,24 +387,111 @@ async def regenerate_report():
 
 
 class DispatchRequest(BaseModel):
-    crews: dict[Crew, Annotated[int, Field(ge=0)]]
+    # Older consoles send only `crews` (trucks per crew type, shared over the sites by workload).
+    crews: dict[Crew, Annotated[int, Field(ge=0)]] = {}
+    # Trucks per site per crew type per day; omitted: what each site stores (Sites tab).
+    sites: dict[str, dict[Crew, Annotated[int, Field(ge=0, le=20)]]] | None = None
+    days: Annotated[int, Field(ge=1, le=7)] = 1
+    min_severity: Annotated[int, Field(ge=1, le=5)] = 1        # the severity floor: plan S{n} and worse
+    triage: bool = True                                         # False: rules only, no Nemotron call
 
 
 @app.post("/api/dispatch", response_model=Plan)
 async def dispatch_crews(request: DispatchRequest):
     try:
-        result = Plan.model_validate(await _invoke(dispatch.plan, request.crews))
+        if isinstance(dispatch, SimpleNamespace):
+            raise RuntimeError("dispatch module unavailable")
+        result = Plan.model_validate(await _invoke(
+            dispatch.plan, request.crews, sites=request.sites, days=request.days,
+            min_severity=request.min_severity, triage=request.triage))
     except Exception as exc:
         log.warning("Dispatch failed (%s); using fallback", config.redact(exc))
         result = await _dispatch_plan(request.crews)
     await asyncio.to_thread(store.set_plan, result)
+    try:                                       # the report reads the latest plan's crew facts
+        report.schedule_regen()
+    except Exception as exc:
+        log.warning("schedule_regen failed (%s)", config.redact(exc))
     return result
+
+
+@app.get("/api/plan", response_model=Plan | None)
+def latest_plan():
+    """The last plan made (persisted), or null."""
+    return store.latest_plan()
+
+
+def _sites():
+    return importlib.import_module("app.planning.facilities")
+
+
+class FacilityInput(BaseModel):
+    """A site from the Sites tab. On PUT every field is optional."""
+    label: str | None = None
+    kind: str | None = None
+    crews: list[Crew] | None = None
+    lat: Annotated[float, Field(ge=-90, le=90)] | None = None
+    lon: Annotated[float, Field(ge=-180, le=180)] | None = None
+    address: str | None = None
+    source: str | None = None
+    source_url: str | None = None
+    note: str | None = None
+    vehicles: dict[Crew, Annotated[int, Field(ge=0, le=20)]] | None = None
 
 
 @app.get("/api/facilities", response_model=list[Facility])
 def list_facilities():
-    """Transfer stations and works yards each crew type is based at."""
-    return list(importlib.import_module("app.planning.facilities").load())
+    """City operating sites: transfer stations, collection, road and street-cleaning yards, with trucks per day."""
+    return list(_sites().load())
+
+
+@app.post("/api/facilities", response_model=Facility)
+def add_facility(body: FacilityInput):
+    fields = body.model_dump(exclude_none=True)
+    if not {"label", "kind", "crews", "lat", "lon"} <= fields.keys():
+        raise HTTPException(422, "A site needs a name, kind, crews and a location")
+    try:
+        return _sites().add(fields)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc).splitlines()[0][:200]) from None
+
+
+@app.put("/api/facilities/{facility_id}", response_model=Facility)
+def update_facility(facility_id: str, body: FacilityInput):
+    try:
+        return _sites().update(facility_id, body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, "No such site") from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc).splitlines()[0][:200]) from None
+
+
+@app.delete("/api/facilities/{facility_id}")
+def remove_facility(facility_id: str):
+    try:
+        _sites().remove(facility_id)
+    except KeyError:
+        raise HTTPException(404, "No such site") from None
+    return {"removed": facility_id}
+
+
+@app.post("/api/facilities/reset", response_model=list[Facility])
+def reset_facilities():
+    """Forget every site edit: the bundled City list again."""
+    return list(_sites().reset())
+
+
+@app.get("/api/geocode")
+async def geocode(q: str):
+    """An address in Toronto -> {lat, lon, label} (OSM Nominatim, one request a second, cached)."""
+    try:
+        hit = await importlib.import_module("app.geo.geocode").search(q)
+    except Exception as exc:
+        log.warning("Geocode failed (%s)", config.redact(exc))
+        raise HTTPException(503, "Address lookup unavailable") from None
+    if hit is None:
+        raise HTTPException(404, "No match in Toronto for that address")
+    return hit
 
 
 @app.get("/api/hazards", response_model=list[Hazard])

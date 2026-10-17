@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 from app import config, store
 from app.ai import nemotron
 from app.ai.prompts import CATEGORIES, DEFAULT_MINUTES, SEVERITY_RUBRIC
-from app.models import (CREW_FOR, IssueRecord, Report, ReportCount, ReportHotspot, ReportIssue, ReportProvenance,
-                        ReportSection, ReportStats)
+from app.models import (CREW_FOR, IssueRecord, Report, ReportCount, ReportCrewPlan, ReportHotspot, ReportIssue,
+                        ReportPlanDay, ReportProvenance, ReportSection, ReportSite, ReportStats, ReportTriageItem)
 
 log = logging.getLogger(__name__)
 try:
@@ -73,11 +73,14 @@ Write:
 - sections: for each category key given, 2-3 sentences of recommended repair approach for THESE findings
   (what to do first, how to group the work, materials), citing issue ids for the worst ones.
 - hotspots: for each hotspot id given, one sentence on what is there and what to send.
+- crew_plan: if crew_plan facts are given, 2-3 sentences on the routed plan (day 1 is today: sites, trucks,
+  hours, what waits and anything unassigned); mention triage only if triage figures are given; state only what the
+  figures show, never assume; otherwise an empty string.
 Use only the facts given; do not invent issues, places or numbers. Do not claim repairs were completed.
 Severity rubric:
 """ + SEVERITY_RUBRIC + """
 Return JSON only: {"summary":"<text>","crews":{"<crew type>":<integer>},"rationale":"<text>",
-"sections":{"<category>":"<text>"},"hotspots":{"<hotspot id>":"<text>"}}"""
+"sections":{"<category>":"<text>"},"hotspots":{"<hotspot id>":"<text>"},"crew_plan":"<text>"}"""
 
 
 class _ReportReply(BaseModel):
@@ -86,6 +89,7 @@ class _ReportReply(BaseModel):
     rationale: str = Field(min_length=1)
     sections: dict[str, str] = {}
     hotspots: dict[str, str] = {}
+    crew_plan: str = ""
 
 
 def _visible(issues: list[IssueRecord]) -> list[IssueRecord]:
@@ -316,6 +320,111 @@ def _stats(open_issues: list[IssueRecord], rejected: int, drives: dict[str, str]
         crew_hours=round(sum(workload.values()) * OVERHEAD / 60, 1), rejected=rejected)
 
 
+# ---- Crew plan: the latest stored dispatch plan, read defensively (older plans lack the multi-day fields) ----
+
+SHIFT_START_MIN = 8 * 60
+TRIAGE_MAX = 40
+UNASSIGNED_MAX = 40
+_DECISION_ORDER = {"today": 0, "later": 1, "defer": 2}
+
+
+def _clock(minutes) -> str | None:
+    if minutes is None:
+        return None
+    total = SHIFT_START_MIN + int(minutes)
+    return f"{total // 60 % 24:02d}:{total % 60:02d}"
+
+
+def _get(obj, name, default=None):
+    value = obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+    return default if value is None else value
+
+
+def _route_minutes(route, minutes: dict[str, int]) -> tuple[int, int]:
+    """Drive and work minutes of an older route without totals: work from the stops' work orders, drive from the
+    arrival times (each arrival minus the work done before it)."""
+    stops, etas = list(_get(route, "stops", [])), list(_get(route, "eta_min", []))
+    work = sum(minutes.get(str(s), 0) for s in stops)
+    if not stops or len(etas) < len(stops):
+        return 0, work
+    return max(0, int(etas[len(stops) - 1]) - sum(minutes.get(str(s), 0) for s in stops[:-1])), work
+
+
+def _crew_plan(plan, severity: dict[str, int], minutes: dict[str, int] | None = None) -> ReportCrewPlan | None:
+    """Summarise a Plan (or None). Every figure is counted here; nothing is asked of a model."""
+    if plan is None:
+        return None
+    routes = list(_get(plan, "routes", []))
+    by_day: dict[int, list] = defaultdict(list)
+    for route in routes:
+        by_day[int(_get(route, "day", 1))].append(route)
+    stated = {int(_get(d, "day", 0)): d for d in _get(plan, "days", [])}
+    days = []
+    for day in sorted(set(by_day) | set(stated)):
+        rs, info = by_day.get(day, []), stated.get(day)
+        totals = [_get(r, "totals") for r in rs if _get(r, "totals") is not None]
+        drive = sum(int(_get(t, "drive_min", 0)) for t in totals) if totals else int(_get(info, "drive_min", 0) or 0)
+        work = sum(int(_get(t, "work_min", 0)) for t in totals) if totals else int(_get(info, "work_min", 0) or 0)
+        if not totals and not drive and not work and minutes:
+            pairs = [_route_minutes(r, minutes) for r in rs]
+            drive, work = sum(p[0] for p in pairs), sum(p[1] for p in pairs)
+        kms = [(_get(t, "distance_km") if _get(t, "distance_km") is not None else None) for t in totals] or \
+              [_get(r, "distance_km") for r in rs]
+        kms = [float(k) for k in kms if k is not None]
+        backs = [int(_get(t, "back_min")) for t in totals if _get(t, "back_min") is not None]
+        jobs = int(_get(info, "jobs", 0) or 0) or sum(len(_get(r, "stops", [])) for r in rs)
+        trucks = int(_get(info, "trucks", 0) or 0) or sum(bool(_get(r, "stops", [])) for r in rs)
+        days.append(ReportPlanDay(day=day, jobs=jobs, trucks=trucks, drive_h=round(drive / 60, 1),
+                                  work_h=round(work / 60, 1), km=round(sum(kms), 1) if kms else None,
+                                  back_first=_clock(min(backs)) if backs else None,
+                                  back_last=_clock(max(backs)) if backs else None,
+                                  solver=_get(info, "solver") or (_get(rs[0], "solver") if rs else None)))
+    site_routes: dict[str, list] = defaultdict(list)
+    for route in routes:
+        if _get(route, "facility_id"):
+            site_routes[_get(route, "facility_id")].append(route)
+    sites = []
+    for facility in _get(plan, "facilities", []):
+        id = str(_get(facility, "id", ""))
+        rs = site_routes.get(id, [])
+        trucks = {str(k): int(v) for k, v in dict(_get(facility, "vehicles", {}) or {}).items()}
+        if not trucks and rs:              # no per-site setting: distinct trucks per crew type per day in the plan
+            n_days = max(1, len({int(_get(r, "day", 1)) for r in rs}))
+            per: dict[str, set] = defaultdict(set)
+            for r in rs:
+                per[str(_get(r, "crew"))].add((_get(r, "vehicle_id") or _get(r, "crew_id"), int(_get(r, "day", 1))))
+            trucks = {crew: math.ceil(len(v) / n_days) for crew, v in per.items()}
+        sites.append(ReportSite(id=id, label=str(_get(facility, "label", id)), kind=str(_get(facility, "kind", "yard")),
+                                crews=[str(c) for c in _get(facility, "crews", [])], trucks=trucks, routes=len(rs),
+                                jobs=sum(len(_get(r, "stops", [])) for r in rs),
+                                assumed=bool(_get(facility, "assumed", False))))
+    sites.sort(key=lambda x: (-x.jobs, x.label))
+    triage = _get(plan, "triage")
+    decisions = [ReportTriageItem(issue_id=str(_get(d, "issue_id", "")), crew=str(_get(d, "crew", "")),
+                                  severity=int(_get(d, "severity", 0) or 0), decision=str(_get(d, "decision", "")),
+                                  reason=str(_get(d, "reason", "")), by=str(_get(d, "by", "")))
+                 for d in (_get(triage, "decisions", []) if triage is not None else [])]
+    counts = Counter(d.decision for d in decisions)
+    decisions.sort(key=lambda d: (_DECISION_ORDER.get(d.decision, 3), -d.severity, d.issue_id))
+    reasons = dict(_get(plan, "unassigned_reasons", {}) or {})
+    unassigned_ids = list(_get(plan, "unassigned", []))
+    unassigned = [ReportTriageItem(issue_id=str(i), crew="", severity=severity.get(str(i), 0), decision="unassigned",
+                                   reason=str(reasons.get(i) or "Not routed"), by="solver")
+                  for i in unassigned_ids]
+    unassigned.sort(key=lambda d: (-d.severity, d.issue_id))
+    stops = sum(len(_get(r, "stops", [])) for r in routes)
+    trucks = len({_get(r, "vehicle_id") or _get(r, "crew_id") for r in routes if _get(r, "stops", [])})
+    return ReportCrewPlan(
+        solver=str(_get(plan, "solver", "fallback")), matrix_source=str(_get(plan, "matrix_source", "straight")),
+        solve_ms=int(_get(plan, "solve_ms", 0) or 0), routes=len(routes), trucks=trucks, jobs=stops, days=days,
+        sites=sites, triage_model=_get(triage, "model") if triage is not None else None,
+        triage_model_name=_get(triage, "model_name") if triage is not None else None,
+        triage_rationale=_get(triage, "rationale") if triage is not None else None,
+        today=counts.get("today", 0), later=counts.get("later", 0),
+        deferred=counts.get("defer", 0) or len(_get(plan, "deferred", [])),
+        triage=decisions[:TRIAGE_MAX], unassigned=unassigned[:UNASSIGNED_MAX], unassigned_total=len(unassigned_ids))
+
+
 def _brief(issue: ReportIssue) -> dict:
     out = issue.model_dump(include={"id", "category", "severity", "severity_reason", "description", "sightings",
                                     "deadline", "drive", "place"})
@@ -366,6 +475,14 @@ async def regenerate() -> Report:
     priorities = [_report_issue(i, drives, places) for i in priority_issues]
     sections = _sections(open_issues, rejected, baseline, drives, places)
 
+    try:
+        plan = await asyncio.to_thread(store.latest_plan)
+        sev_of = {i.id: i.severity for i in canonical}
+        crew_plan = _crew_plan(plan, sev_of, {i.id: _minutes(i) for i in canonical})
+    except Exception as exc:
+        log.warning("Report crew plan skipped (%s)", config.redact(exc))
+        plan, sev_of, crew_plan = None, {}, None
+
     report_model, model_name = "template", None
     if open_issues:
         facts = {
@@ -379,6 +496,18 @@ async def regenerate() -> Report:
             "hotspots": {h.id: {"label": h.label, "issues": h.issues, "severe": h.severe,
                                 "categories": h.categories, "drives": h.drives} for h in hotspots},
         }
+        if crew_plan is not None:
+            # Day 1 is today. Triage counts only exist when the plan was triaged; never send zeros that read as facts.
+            include = {"solver", "matrix_source", "routes", "trucks", "jobs", "unassigned_total"}
+            if crew_plan.triage_model:
+                include |= {"today", "later", "deferred", "triage_model"}
+            facts["crew_plan"] = crew_plan.model_dump(include=include) | {
+                "day_1": "today",
+                "unassigned_by_severity": dict(Counter(f"severity_{sev_of[str(u)]}" for u in _get(plan, "unassigned", [])
+                                                       if str(u) in sev_of)),
+                "days": [d.model_dump(include={"day", "jobs", "trucks", "drive_h", "work_h", "km", "back_last"})
+                         for d in crew_plan.days],
+                "sites": [{"label": x.label, "trucks": x.trucks, "jobs": x.jobs} for x in crew_plan.sites[:8]]}
         reply, model = await _nemotron(facts)
         if reply is not None:
             summary, rationale, crews = reply.summary, reply.rationale, _clamp(reply.crews, baseline)
@@ -389,6 +518,8 @@ async def regenerate() -> Report:
                     section.approach = text
             for h in hotspots:
                 h.note = (reply.hotspots.get(h.id) or "").strip() or None
+            if crew_plan is not None:
+                crew_plan.note = reply.crew_plan.strip() or None
         else:
             log.info("Report: template fallback")
     for section in sections:
@@ -399,7 +530,7 @@ async def regenerate() -> Report:
              len(priority_issues), len(hotspots), report_model)
     return Report(generated_at=datetime.now(timezone.utc), summary=summary, counts=counts, crews=crews,
                   rationale=rationale, model=model_name, stats=stats, sections=sections, priorities=priorities,
-                  hotspots=hotspots, provenance=provenance)
+                  hotspots=hotspots, provenance=provenance, crew_plan=crew_plan)
 
 
 # ---- Debounced background regeneration ----
