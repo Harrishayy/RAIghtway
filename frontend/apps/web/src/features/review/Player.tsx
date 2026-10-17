@@ -12,6 +12,8 @@ import { Icon } from '@/ui/Icon';
 import { Seg } from '@/ui/Seg';
 import { EditLayer, MarkForm, MarkLayer, type MarkDraft } from './MarkIssue';
 
+const HOLD_MS = 1100;
+
 export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const client = useClient(); const url = client.videoUrl(video);
   // a 404 or undecodable file falls back to stepping through keyframes
@@ -20,6 +22,10 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const rate = useUi(s => s.rate); const setRate = useUi(s => s.setRate);
   const el = useRef<HTMLVideoElement>(null);
   const [mediaDur, setMediaDur] = useState(0);
+  // While playing, passing a finding holds on its keyframe with the box for HOLD_MS, then playback carries on.
+  // The box only fits that exact frame (the camera keeps moving), so at 2x or 4x it would otherwise just flash.
+  // A hold is tied to the seek and file it started on, so pausing, seeking or switching drives ends it at once.
+  const [hold, setHold] = useState<{ id: string; nonce: number; src: string | null } | null>(null); const holdTimer = useRef(0);
   const dur = video.duration_s || mediaDur;
   const rates = src ? [1, 2, 4] : [1, 4, 16]; const r = rates.includes(rate) ? rate : rates[1]!;
   // Mark issue: paused on the current frame, the operator boxes and files an issue (MarkIssue.tsx).
@@ -66,12 +72,20 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
     };
     raf = requestAnimationFrame(loop); return () => cancelAnimationFrame(raf);
   }, [playing, src, r, dur, issues, setPlaying]);
+  useEffect(() => () => window.clearTimeout(holdTimer.current), []);
   // push seeks into the <video>
   useEffect(() => { const v = el.current; if (v && Math.abs(v.currentTime - usePlayback.getState().t) > 0.25) v.currentTime = usePlayback.getState().t; }, [seekNonce]);
   // pull time from the <video>
   useEffect(() => {
     const v = el.current; if (!v || !src) return; let id = 0;
-    const onFrame = () => { const s = usePlayback.getState(); const t1 = v.currentTime; const passed = issues.find(i => i.t > s.t && i.t <= t1); if (passed) s.select(passed.id); tick(t1); id = v.requestVideoFrameCallback?.(onFrame) ?? 0; };
+    const onFrame = () => {
+      const s = usePlayback.getState(); const t1 = v.currentTime; const passed = issues.find(i => i.t > s.t && i.t <= t1);
+      if (passed && s.playing && passed.bbox && !passed.provisional) {
+        v.pause(); s.select(passed.id); tick(passed.t); setHold({ id: passed.id, nonce: s.seekNonce, src }); window.clearTimeout(holdTimer.current);
+        holdTimer.current = window.setTimeout(() => { setHold(null); if (usePlayback.getState().playing) void v.play().catch(() => setPlaying(false)); }, HOLD_MS);
+      } else { if (passed) s.select(passed.id); tick(t1); }
+      id = v.requestVideoFrameCallback?.(onFrame) ?? 0;
+    };
     id = v.requestVideoFrameCallback?.(onFrame) ?? 0; const onTime = () => { if (!v.requestVideoFrameCallback) tick(v.currentTime); };
     v.addEventListener('timeupdate', onTime); v.addEventListener('ended', () => setPlaying(false));
     return () => { v.cancelVideoFrameCallback?.(id); v.removeEventListener('timeupdate', onTime); };
@@ -97,8 +111,9 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   // On footage the camera moves, so a box only fits close to its keyframe; paused on a finding, show that
   // exact keyframe over the video so the box sits on what the model saw.
   const d = near ? t - near.t : Infinity;
-  const boxed = src ? (d > -0.6 && d < (playing ? 0.35 : 0.6) ? near : null) : shown;
-  const still = Boolean(src && boxed && !playing);
+  const holding = hold && playing && hold.nonce === seekNonce && hold.src === src ? issues.find(i => i.id === hold.id) ?? null : null;
+  const boxed = holding ?? (src ? (d > -0.6 && d < (playing ? 0.35 : 0.6) ? near : null) : shown);
+  const still = Boolean(src && boxed && (!playing || holding));
   const drift = shown ? (t - shown.t + 1.2) / 8.2 : (t % 9) / 9;
   return (
     <>

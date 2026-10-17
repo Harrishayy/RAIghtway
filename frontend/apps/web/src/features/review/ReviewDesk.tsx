@@ -16,6 +16,7 @@ import { FootageList } from './FootageList';
 import { Player } from './Player';
 import { Timeline } from './Timeline';
 import { Detections } from './Detections';
+import { FilterNote } from './FilterNote';
 
 export function ReviewDesk() {
   const videos = useVideos(); const allIssues = useIssues(); const cats = useCategories();
@@ -42,7 +43,7 @@ export function ReviewDesk() {
 
   const playerBody = detail.isError ? <Failed error={detail.error} onRetry={() => void detail.refetch()} />
     : !video ? (videos.isPending || detail.isPending ? <Loading rows={5} /> : <Empty title="No drive open">Pick one from Footage.</Empty>)
-    : <div className="player"><Player video={video} issues={issues} /><Timeline video={video} issues={issues} cats={cats} /><Detections issues={issues} /></div>;
+    : <div className="player"><Player video={video} issues={issues} /><FilterNote all={detail.data?.issues} cats={cats} /><Timeline video={video} issues={issues} cats={cats} /><Detections issues={issues} /></div>;
 
   return (
     <Desk panes={{
