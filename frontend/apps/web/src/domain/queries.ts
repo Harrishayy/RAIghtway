@@ -1,6 +1,7 @@
 'use client';
 // Server state. Every screen reads through these hooks; polling speeds up while a job is running and
 // stops when the tab is hidden. Keys are centralised so mutations can invalidate precisely.
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CrewCounts, DispatchOptions, Facility, FacilityInput, Issue, IssuePatch, LatLon, ManualIssueInput, Plan, Recommendation, RecommendOptions, Video, Zone } from '@raightway/core';
 import { env } from '@/config/env';
@@ -33,8 +34,14 @@ export function useIssues() {
   return useQuery({ queryKey: keys.issues, queryFn: ({ signal }) => c.listIssues(signal), refetchInterval: live ? env.pollLiveMs : env.pollIdleMs });
 }
 export function useVideo(id: string | null) {
-  const c = useClient(); const { data: videos } = useVideos(); const v = videos?.find(x => x.id === id);
+  const c = useClient(); const qc = useQueryClient(); const { data: videos } = useVideos(); const v = videos?.find(x => x.id === id);
   const live = v ? v.status === 'queued' || v.status === 'analysing' : false;
+  // Polling stops at "done", so the last poll caught the drive mid-analysis: fetch it (and what it fed) once more.
+  const wasLive = useRef(live);
+  useEffect(() => {
+    if (wasLive.current && !live && id) for (const queryKey of [keys.video(id), keys.issues, keys.report]) void qc.invalidateQueries({ queryKey });
+    wasLive.current = live;
+  }, [live, id, qc]);
   return useQuery({ queryKey: keys.video(id ?? ''), queryFn: ({ signal }) => c.getVideo(id!, signal), enabled: Boolean(id), refetchInterval: live ? env.pollLiveMs : false, placeholderData: prev => (prev?.video.id === id ? prev : undefined) });
 }
 export function useSimilar(id: string | null) {
@@ -58,9 +65,11 @@ export function useDispatch() {
     onError: e => toast({ tone: 'bad', title: 'Routing failed', body: (e as Error).message }),
   });
 }
-/** The plan made in this session (set by useDispatch); null until one is made. */
+/** The latest plan: loaded once from GET /api/plan (so a reload, or a plan made elsewhere, shows), then kept in
+ *  step by useDispatch, the background road-path poll and Clear plan. */
 export function useLatestPlan() {
-  return useQuery<Plan | null>({ queryKey: keys.plan, queryFn: () => null, enabled: false, initialData: null, staleTime: Infinity });
+  const c = useClient();
+  return useQuery<Plan | null>({ queryKey: keys.plan, queryFn: () => c.latestPlan(), staleTime: Infinity, refetchOnWindowFocus: false });
 }
 /** While the latest plan's road paths are still loading in the background, poll GET /api/plan and swap in
  *  each update (only for the same plan, so a Clear plan or a newer plan isn't overwritten). */

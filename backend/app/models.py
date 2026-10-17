@@ -277,6 +277,7 @@ class Report(BaseModel):
     hotspots: list[ReportHotspot] = []
     provenance: ReportProvenance | None = None
     crew_plan: ReportCrewPlan | None = None            # None: no plan stored yet (plan routes on Dispatch)
+    updating: bool = False                            # response only: a newer report is queued or being written
 
 
 FacilityKind = Literal["transfer_station", "collection_yard", "road_yard", "cleaning_yard", "yard"]

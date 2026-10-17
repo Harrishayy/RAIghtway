@@ -210,10 +210,13 @@ async def _run_analysis(video: VideoRecord, path: str) -> None:
         await _invoke(analyse_video, video.id, path, source=video.source,
                       drive=video.drive, start_s=video.start_s)
     except asyncio.CancelledError:
+        await asyncio.to_thread(store.replace_provisional, video.id, [])
         await asyncio.to_thread(store.set_progress, video.id, status="failed", stage="Analysis interrupted by shutdown")
         raise
     except Exception as exc:
         log.warning("Video analysis failed (%s)", config.redact(exc))
+        # Its provisional pins would otherwise stay on the map, in the report and in routes until a restart.
+        await asyncio.to_thread(store.replace_provisional, video.id, [])
         await asyncio.to_thread(store.set_progress, video.id, status="failed",
                                 stage=f"Analysis failed: {config.redact(exc)}")
 
@@ -479,6 +482,10 @@ def latest_report():
     for row in [*result.priorities, *(row for section in result.sections for row in section.top)]:
         if row.id in names:
             row.name = names[row.id]
+    try:
+        result.updating = importlib.import_module("app.planning.report").is_updating()
+    except Exception as exc:
+        log.warning("Report status unavailable (%s)", config.redact(exc))
     return result
 
 

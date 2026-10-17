@@ -33,6 +33,7 @@ SWEEP_FILE = gps.DATA_DIR / "sweep" / "results.jsonl"
 DONE_FILE = "run_done.json"
 BUILD_INVENTORY = config.BACKEND_DIR.parent / "scripts" / "build_inventory.py"
 _lock = asyncio.Lock()
+_active = False                       # a run's clips are still being fetched or analysed
 
 
 class NothingToRun(Exception):
@@ -168,8 +169,12 @@ async def start(analyse, clips: int | None = None):
     Re-checks are registered as uploads: they dedupe against corpus history (their findings land as
     re-sightings) but never become history themselves, and an admin reset hides them after rehearsals.
     Returns (first video, go). Raises NothingToRun only when there is nothing at all to look at."""
+    global _active
     if _lock.locked():
         raise RuntimeError("A run is already starting")
+    if _active:
+        # pick() skips only finished stretches, so a second run now would analyse the same footage again
+        raise RuntimeError("A run is still analysing; wait for it to finish")
     clips = max(1, min(int(clips or config.RUN_CLIPS), 5))
     async with _lock:
         await asyncio.to_thread(refresh_inventory)
@@ -192,6 +197,7 @@ async def start(analyse, clips: int | None = None):
             await asyncio.to_thread(store.add_video, video)
             jobs.append((video, stretch))
             log.info("Run %s (%s): %s from %.0f s, %d segments", video.id, kind, drive, start_s, len(stretch))
+        _active = True
 
     async def one(video: VideoRecord, stretch: list[inventory.Segment]) -> None:
         # Written where GET /api/videos/{id}/file looks, so the console can play the clip.
@@ -209,7 +215,16 @@ async def start(analyse, clips: int | None = None):
             await asyncio.to_thread(_mark_done, [s.segment_id for s in stretch])
 
     async def go() -> None:
-        for video, stretch in jobs:
-            await one(video, stretch)
+        global _active
+        try:
+            for video, stretch in jobs:
+                try:
+                    await one(video, stretch)
+                except Exception as exc:   # one clip failing must not strand the rest at "queued"
+                    log.warning("Run clip %s failed (%s)", video.id, config.redact(exc))
+                    await asyncio.to_thread(store.set_progress, video.id, status="failed",
+                                            stage=f"Run failed: {config.redact(exc)}")
+        finally:
+            _active = False
 
     return jobs[0][0], go

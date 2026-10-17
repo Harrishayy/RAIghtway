@@ -385,7 +385,8 @@ def load() -> None:
                 reports.append(snapshot_report)
             # On a tie the snapshot copy wins: VastDB rows keep only the core report columns.
             _report = max(reports, key=lambda r: (_utc(r.generated_at), r is snapshot_report), default=None)
-            _plan = plans[-1] if plans else None
+            # The snapshot keeps the whole plan; VastDB plan rows lack paths, triage, sites and plan_id.
+            _plan = _snapshot_plan(snapshot) or (plans[-1] if plans else None)
             if _cutoff:
                 if _report and _utc(_report.generated_at) < _cutoff:
                     _report = None
@@ -504,6 +505,14 @@ def add_issues(issues: list[IssueRecord], provisional: bool = False) -> None:
             if saved:
                 _enqueue("insert_issues", saved)
                 _index(saved)
+
+
+def _snapshot_plan(snapshot: dict) -> Plan | None:
+    try:
+        return Plan.model_validate(snapshot["plan"]) if snapshot.get("plan") else None
+    except Exception as exc:
+        log.warning("Snapshot plan invalid (%s)", config.redact(exc))
+        return None
 
 
 def replace_provisional(video_id: str, issues: list[IssueRecord]) -> None:

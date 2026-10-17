@@ -16,8 +16,10 @@ const HOLD_MS = 1100;
 
 export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const client = useClient(); const url = client.videoUrl(video);
-  // a 404 or undecodable file falls back to stepping through keyframes
-  const [badUrl, setBadUrl] = useState<string | null>(null); const src = url && url !== badUrl ? url : null;
+  // a 404 or undecodable file falls back to stepping through keyframes. Keyed by status too: a Run clip 404s
+  // until it has been fetched from VAST, so a status change (analysing -> done) tries the file again.
+  const fileKey = url ? `${url}|${video.status}` : null;
+  const [badUrl, setBadUrl] = useState<string | null>(null); const src = url && fileKey !== badUrl ? url : null;
   const { t, playing, seekNonce, setPlaying, seek, tick, select } = usePlayback();
   const rate = useUi(s => s.rate); const setRate = useUi(s => s.setRate);
   const el = useRef<HTMLVideoElement>(null);
@@ -120,7 +122,7 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
       <Frame placeholder={sample ? 'scene' : 'blank'} emptyLabel={issues.length ? 'No frame' : video.status === 'done' ? 'No findings on this drive' : 'Analysing…'}
         issue={editing ?? (draft ? null : boxed)} src={editing ? client.frameUrl(editing) : !draft && boxed ? client.frameUrl(boxed) : null} still={editing ? true : draft ? false : still}
         overlay={editing ? <EditLayer /> : draft ? <MarkLayer box={draft.box} onBox={setBox} /> : undefined} seed={hashStr(`${video.id}${Math.floor(t / 9)}`)} drift={drift}
-        video={src ? <video ref={el} src={src} playsInline muted preload="metadata" onLoadedMetadata={e => setMediaDur(e.currentTarget.duration || 0)} onError={() => setBadUrl(url)} /> : undefined}
+        video={src ? <video ref={el} src={src} playsInline muted preload="metadata" onLoadedMetadata={e => setMediaDur(e.currentTarget.duration || 0)} onError={() => setBadUrl(fileKey)} /> : undefined}
         hud={{
           tl: <><span className="rec" /><span className="hud-cam">{video.camera_id ?? 'camera'} · </span>{video.drive ?? video.filename}</>,
           bl: fix ? <><span className="hud-gps">{fmtCoord(fix.at[0], fix.at[1])}{fix.speed != null ? ' · ' : ''}</span>{fix.speed != null ? `${Math.round(fix.speed)} km/h` : ''}</> : null,

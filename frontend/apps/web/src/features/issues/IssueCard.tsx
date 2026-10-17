@@ -4,7 +4,7 @@
 // `frame` adds the finding's frame with its box, for screens that have no player beside the card.
 import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, issueLabel, raterDef, severityDef, type Issue, type Similar, type Urgency } from '@raightway/core';
 import { useClient } from '@/domain/client';
-import { useSimilar, useUpdateIssue } from '@/domain/queries';
+import { useSimilar, useUpdateIssue, useVideos } from '@/domain/queries';
 import { Icon } from '@/ui/Icon';
 import { usePlayback } from '@/state/playback';
 import { Chip, CategoryLabel, SevDot, SevLabel } from '@/ui/marks';
@@ -24,6 +24,8 @@ const INDEX: Record<NonNullable<Similar['search']>, [string, string]> = {
 export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | undefined; onOpen?: (i: Issue) => void; frame?: boolean }) {
   const client = useClient(); const similar = useSimilar(issue && !issue.provisional ? issue.duplicate_of ?? issue.id : null);
   const { open, seek, videoId, select } = usePlayback(); const index = similar.data?.[0]?.search;
+  // drive names, not video ids: Run clips have uuid ids
+  const { data: videos } = useVideos(); const drive = (vid: string) => videos?.find(v => v.id === vid)?.drive ?? vid;
   if (!issue) return <div className="issue"><Empty title="Nothing selected">Pick a finding on the timeline, the table or the map.</Empty></div>;
   const sv = severityDef(issue.severity); const wo = issue.work_order;
   const jump = (vid: string, t: number) => (vid === videoId ? seek(t) : open(vid, t, issue.id));
@@ -31,7 +33,7 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
     <div className="issue">
       {frame ? (
         <div className="photo-wrap">
-          <Frame issue={issue} src={client.frameUrl(issue)} seed={issue.frame_seed ?? 0} className="issue-frame" />
+          <Frame issue={issue} src={client.frameUrl(issue)} seed={issue.frame_seed ?? 0} placeholder={client.id === 'mock' ? 'scene' : 'blank'} className="issue-frame" />
           {!issue.provisional ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="photo-cover" /> : null}
         </div>
       ) : null}
@@ -48,13 +50,13 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
       {!frame && !issue.provisional && client.frameUrl(issue) ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="btn btn-ghost btn-sm issue-photo"><Icon name="zoom" />Full-size photo</PhotoButton> : null}
       <Grade issue={issue} />
       <dl className="kv">
-        <dt>Seen</dt><dd>{issue.sightings}× · first in {issue.video_id} @ {fmtTimecode(issue.t)}</dd>
+        <dt>Seen</dt><dd>{issue.sightings}× · first in {drive(issue.video_id)} @ {fmtTimecode(issue.t)}</dd>
         {issue.source === 'manual' ? <><dt>Source</dt><dd>Operator-reported on footage</dd></> : <><dt>Confidence</dt><dd>{Math.round(issue.confidence * 100)}%</dd></>}
         {issue.lat != null && issue.lon != null ? <><dt>GPS</dt><dd>{fmtCoord(issue.lat, issue.lon)}</dd></> : null}
       </dl>
       {issue.duplicate_of ? <p className="note">A re-sighting of <button type="button" className="link" onClick={() => select(issue.duplicate_of)}>{issue.duplicate_of}</button>; its work order lives there.</p> : null}
       {issue.sighting_refs?.length ? (
-        <div><div className="label">Sightings</div><div className="seen">{issue.sighting_refs.map((r, k) => <button key={k} type="button" onClick={() => jump(r.video_id, r.t)}>{r.video_id} · {fmtClock(r.t)}</button>)}</div></div>
+        <div><div className="label">Sightings</div><div className="seen">{issue.sighting_refs.map((r, k) => <button key={k} type="button" onClick={() => jump(r.video_id, r.t)}>{r.drive ?? drive(r.video_id)} · {fmtClock(r.t)}</button>)}</div></div>
       ) : null}
       {wo ? (
         <div><div className="label">Work order</div>
@@ -63,7 +65,7 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
       ) : !issue.duplicate_of ? <p className="note">{issue.provisional ? 'Work order follows once history is checked.' : 'No work order yet.'}</p> : null}
       {client.capabilities.similar && similar.data?.length ? (
         <div><div className="label">Similar issues{index ? <span className="muted" title={INDEX[index][1]}> · {INDEX[index][0]}</span> : null}</div>
-          <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" title="Watch in Review" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{issueLabel(s.issue)}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button><PhotoButton src={client.frameUrl(s.issue)} photo={photoOf(s.issue)} className="thumb-cover" /></li>)}</ul>
+          <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" title="Watch in Review" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{issueLabel(s.issue)}</span><span className="muted small">{s.issue.place ?? drive(s.issue.video_id)}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button><PhotoButton src={client.frameUrl(s.issue)} photo={photoOf(s.issue)} className="thumb-cover" /></li>)}</ul>
         </div>
       ) : null}
     </div>

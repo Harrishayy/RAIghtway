@@ -227,3 +227,27 @@ def test_report_shows_current_names(fresh, monkeypatch):
     store.apply_names([store.name_row("c1", "Bathurst crater")])
     from app.main import app
     assert TestClient(app).get("/api/report").json()["priorities"][0]["name"] == "Bathurst crater"
+
+
+def test_failed_analysis_drops_its_provisional_pins(fresh, monkeypatch):
+    import asyncio
+    import app.main as main
+    video = store._videos["corpus-set04-video_0008"]
+    store.add_issues([_model_issue("p-1")], provisional=True)
+
+    async def boom(*a, **k):
+        raise RuntimeError("Cosmos down")
+    monkeypatch.setattr(main, "analyse_video", boom)
+    asyncio.run(main._run_analysis(video, "/nowhere.mp4"))
+    assert store.get_issue("p-1") is None and store._videos[video.id].status == "failed"
+
+
+def test_report_says_when_a_newer_one_is_coming(fresh, monkeypatch):
+    from app.main import app
+    from app.models import Report
+    from app.planning import report
+    monkeypatch.setattr(store, "_report", Report(generated_at=datetime.now(timezone.utc), summary="s", counts={},
+                                                 crews={}, rationale="r"))
+    monkeypatch.setattr(report, "is_updating", lambda: True)
+    assert TestClient(app).get("/api/report").json()["updating"] is True
+    assert store.latest_report().updating is False                     # the stored report is never marked

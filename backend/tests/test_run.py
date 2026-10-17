@@ -11,6 +11,11 @@ def seg(drive, t, moving=True):
                    drive=drive, t_start=t, moving=moving)
 
 
+@pytest.fixture(autouse=True)
+def idle(monkeypatch):
+    monkeypatch.setattr(run, "_active", False)   # a started run that never calls go() would hold the guard
+
+
 @pytest.fixture
 def world(monkeypatch):
     segments = [seg("set01/video_0001", t) for t in range(0, 60, 5)] + [seg("set04/video_0008", t) for t in range(300, 345, 5)]
@@ -83,3 +88,24 @@ def test_start_queues_new_footage_then_rechecks(world, monkeypatch):
     assert [(v.run_kind, v.source, v.drive) for v in added] == [("new", "corpus", "set04/video_0008"),
                                                                  ("recheck", "upload", "set01/video_0001")]
     assert first is added[0] and all(v.status == "queued" for v in added)
+
+
+def test_second_run_is_refused_until_the_first_finishes(world, monkeypatch):
+    import asyncio
+    from app import store
+    segments, state = world
+    state["sweep"] = {s.segment_id for s in segments}
+    state["held"] = {s.segment_id for s in segments if s.drive == "set04/video_0008"}
+    _corpus(monkeypatch, {})
+    monkeypatch.setattr(store, "add_video", lambda v: None)
+    monkeypatch.setattr(store, "set_progress", lambda *a, **k: None)
+    monkeypatch.setattr(run, "refresh_inventory", lambda: True)
+    monkeypatch.setattr(run, "_fetch", lambda stretch, path: (_ for _ in ()).throw(OSError("S3 down")))
+
+    async def scenario():
+        _, go = await run.start(lambda *a: None, clips=1)
+        with pytest.raises(RuntimeError, match="still analysing"):   # pick() would choose the same stretch
+            await run.start(lambda *a: None, clips=1)
+        await go()                                                     # a failed fetch still ends the run
+        await run.start(lambda *a: None, clips=1)
+    asyncio.run(scenario())
