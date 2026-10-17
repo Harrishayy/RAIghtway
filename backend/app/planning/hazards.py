@@ -17,7 +17,7 @@ import time
 
 import httpx
 
-from app import config, store
+from app import config, curation, store
 from app.geo.distance import LatLon, covered_m, km, length_m, metres_to_line, segments_near
 from app.models import Hazard, RouteWarning
 
@@ -140,7 +140,7 @@ async def city() -> list[Hazard]:
 def dashcam() -> list[Hazard]:
     return [Hazard(id=i.id, source="dashcam", kind="work_zone", label=i.description, lat=i.lat, lon=i.lon,
                    severity=i.severity, detail=f"Seen on camera {i.sightings}×")
-            for i in store.canonical_issues() if i.category == "work_zone" and i.lat is not None and i.lon is not None]
+            for i in curation.visible(store.canonical_issues()) if i.category == "work_zone" and getattr(i, "verdict", None) != "rejected" and i.lat is not None and i.lon is not None]
 
 
 async def near(points: list[LatLon], radius_km: float = 1.5, min_severity: int = WARN_AT) -> list[Hazard]:

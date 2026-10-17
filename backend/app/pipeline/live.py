@@ -10,7 +10,7 @@ import time
 from uuid import uuid4
 
 from app import config, store
-from app.ai import nemotron
+from app.ai import nemotron, rating
 from app.models import Detection, IssueRecord, VideoRecord
 from app.pipeline import dedupe, piece, replay, segment
 
@@ -102,6 +102,9 @@ async def _analyse(run: _Run, video_id: str, path: str, source: str, drive, star
     finally:
         await asyncio.to_thread(shutil.rmtree, work, True)
 
+    # The console maps this onto the "Repairs" stage; work-order urgency then follows the new grades.
+    await run.stage("planning repairs: grading severity", 0.8)
+    rating_rows = await _rate(records)
     await run.stage("planning repairs", 0.85)
     canonical = [r for r in records if not r.duplicate_of]
     orders, explanation = await nemotron.work_orders_and_explanation(video, canonical, records)
@@ -111,12 +114,34 @@ async def _analyse(run: _Run, video_id: str, path: str, source: str, drive, star
     track = await asyncio.to_thread(_track, drive, start_s, duration)
     run.committed = True
     await asyncio.to_thread(store.replace_provisional, video_id, records)
+    if rating_rows:
+        try:
+            await asyncio.to_thread(store.apply_ratings, rating_rows)    # log + VastDB `ratings` row
+        except Exception as exc:
+            log.warning("Saving ratings failed (%s)", config.redact(exc))
     await asyncio.to_thread(store.update_video, video_id, explanation=explanation,
                             issue_ids=[r.id for r in records], track=track, duration_s=duration)
     run.timings.append({"stage": "done", "progress": 1.0, "t": round(run.elapsed(), 2)})
     await asyncio.to_thread(store.set_progress, video_id, status="done", progress=1.0, stage="done")
     return {"timings": run.timings, "issues": [r.model_dump(mode="json") for r in records],
             "explanation": explanation, "track": track, "duration_s": duration}
+
+
+async def _rate(records: list[IssueRecord]) -> list[dict]:
+    """Re-grade every new sighting from its keyframe, within a time budget. Never raises: on any failure the
+    findings keep the find pass's severity."""
+    try:
+        ratings = await rating.rate_issues(records, budget_s=rating.LIVE_BUDGET_S)
+        rows = []
+        for record in records:
+            if record.id in ratings:
+                row = rating.row(record, ratings[record.id])
+                store.apply_rating_row(record, row)
+                rows.append(row)
+        return rows
+    except Exception as exc:
+        log.warning("Severity rating skipped (%s)", config.redact(exc))
+        return []
 
 
 def _log_timings(video_id: str, timings: list[dict], how: str) -> None:

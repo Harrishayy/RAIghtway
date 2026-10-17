@@ -133,11 +133,18 @@ async function watchdog() {
   }
 }
 
+/** The FastAPI backend serves VSS search (POST /api/search), so switch it on, keeping any capabilities already set. */
+function capabilities() {
+  let own = {};
+  try { own = JSON.parse(process.env.NEXT_PUBLIC_API_CAPABILITIES || '{}'); } catch { say('web', 'ignoring NEXT_PUBLIC_API_CAPABILITIES: not JSON'); }
+  return JSON.stringify({ topicSearch: true, ...own });
+}
+
 function startWeb() {
   web = spawn('pnpm', ['dev'], {
     cwd: FRONTEND_DIR,
     stdio: 'inherit',
-    env: { ...process.env, NEXT_PUBLIC_DATA_SOURCE: 'http', RAIGHTWAY_API_URL: API },
+    env: { ...process.env, NEXT_PUBLIC_DATA_SOURCE: 'http', RAIGHTWAY_API_URL: API, NEXT_PUBLIC_API_CAPABILITIES: capabilities() },
   });
   web.on('exit', code => { if (!stopping) { say('web', `next dev exited (code ${code})`); shutdown(code ?? 1); } });
 }

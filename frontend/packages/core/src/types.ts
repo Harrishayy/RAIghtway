@@ -51,6 +51,16 @@ export interface Issue {
   /** UI extra: true while a live analysis has found but not yet confirmed it. */
   provisional?: boolean;
   source?: 'upload' | 'corpus';
+  /** Demo rank from a manual review of the footage (1 shows first); absent for most issues. */
+  featured?: number | null;
+  /** Severity rating pass: one sentence on what the rater saw and why this grade. */
+  severity_reason?: string | null;
+  /** Who graded severity: `cosmos3-reason`, `nemotron-super-vl` (fallback). Absent = the find pass's grade. */
+  severity_model?: string | null;
+  /** `rejected` = the rater judged it not a real defect (kept on record, left out of report and dispatch). */
+  verdict?: 'confirmed' | 'rejected' | null;
+  /** The find pass's grade before re-grading. */
+  find_severity?: number | null;
 }
 
 export interface AnalysisResult { found: number; merged: number; fresh: number }
@@ -94,7 +104,48 @@ export interface Report {
   rationale: string;
   /** UI extras */
   rationale_by_crew?: Partial<Record<CrewType, string>>;
-  model?: string;
+  /** Display name of the model that wrote the prose (absent or null: the application's template). */
+  model?: string | null;
+  /** Detail sections (optional; older reports lack them). Figures come from code, prose from Nemotron. */
+  stats?: ReportStats | null;
+  sections?: ReportSection[];
+  priorities?: ReportIssue[];
+  hotspots?: ReportHotspot[];
+  provenance?: ReportProvenance | null;
+}
+export type Deadline = 'today' | 'this week' | 'this month' | 'routine';
+/** One finding as the report lists it. */
+export interface ReportIssue {
+  id: string; category: CategoryId; severity: Severity; severity_reason?: string | null; description: string;
+  video_id: string; drive?: string | null; t: number; lat?: number | null; lon?: number | null;
+  /** Nearest named street, when known. */
+  place?: string | null;
+  sightings: number; confidence: number; deadline: Deadline; crew: CrewType; repair?: string | null; minutes: number;
+}
+export interface ReportSection {
+  category: CategoryId; crew: CrewType; open: number;
+  /** "1".."5" → open issues at that severity. */
+  by_severity: Record<string, number>;
+  severe: number; rejected: number; work_minutes: number; crew_hours: number; crews: number;
+  equipment: { label: string; count: number }[];
+  top: ReportIssue[];
+  /** Recommended repair approach (Nemotron, else the application's template). */
+  approach?: string | null;
+}
+export interface ReportHotspot {
+  id: string; label: string; lat: number; lon: number; radius_m: number; issues: number; severe: number;
+  max_severity: number; score: number; categories: Record<string, number>; drives: string[]; issue_ids: string[];
+  note?: string | null;
+}
+export interface ReportStats {
+  open: number; today: number; this_week: number; this_month: number; routine: number;
+  located: number; drives: number; crews: number; crew_hours: number; rejected: number;
+}
+/** Which models answered and how complete the data is. */
+export interface ReportProvenance {
+  report_model: string; find_model: string; rating_models: Record<string, number>; unrated: number; rejected: number;
+  sightings_total: number; canonical: number; duplicates_merged: number; with_embedding: number; with_gps: number;
+  with_box: number; work_orders: number; template_work_orders: number; caveats: string[];
 }
 export interface ReportPayload { report: Report; updating: boolean }
 

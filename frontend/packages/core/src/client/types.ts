@@ -5,6 +5,8 @@ import type { CrewCounts, Depot, Directions, Hazard, Issue, LatLon, Plan, Report
 /** What this backend can do. The UI hides controls for anything switched off. */
 export interface Capabilities {
   upload: boolean;
+  /** POST /api/run: analyse the next footage in the VAST index that hasn't been analysed yet. */
+  run: boolean;
   dispatch: boolean;
   regenerateReport: boolean;
   similar: boolean;
@@ -35,6 +37,8 @@ export interface RaightwayClient {
   /** Best road path between two points around current closures. */
   directions(origin: LatLon, destination: LatLon): Promise<Directions>;
   upload(file: File, opts?: UploadOptions): Promise<Video>;
+  /** Starts a live analysis of unseen footage from the VAST index; resolves with its Video (queued). */
+  run(): Promise<Video>;
   searchTopic(query: string, signal?: AbortSignal): Promise<TopicHit[]>;
   /** An <img> src for an issue's frame, or null to draw a placeholder. */
   frameUrl(issue: Issue): string | null;

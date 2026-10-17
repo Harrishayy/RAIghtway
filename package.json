@@ -8,6 +8,9 @@
     "check": "pnpm --dir frontend check",
     "backend:status": "pnpm --dir frontend backend:status",
     "backend:restart": "pnpm --dir frontend backend:restart",
-    "backend:logs": "pnpm --dir frontend backend:logs"
+    "backend:logs": "pnpm --dir frontend backend:logs",
+    "demo:on": "ssh bc-afthabshiraz \"curl -s -X POST localhost:8000/api/admin/demo -H 'content-type: application/json' -d '{\\\"on\\\":true}'\" && echo",
+    "demo:off": "ssh bc-afthabshiraz \"curl -s -X POST localhost:8000/api/admin/demo -H 'content-type: application/json' -d '{\\\"on\\\":false}'\" && echo",
+    "demo:status": "ssh bc-afthabshiraz 'curl -s localhost:8000/api/admin/demo' && echo"
   }
 }

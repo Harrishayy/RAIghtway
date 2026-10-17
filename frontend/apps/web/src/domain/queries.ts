@@ -65,6 +65,15 @@ export function useUpload() {
     onError: e => toast({ tone: 'bad', title: 'Upload failed', body: (e as Error).message }),
   });
 }
+export function useRun() {
+  const c = useClient(); const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => c.run(),
+    onSuccess: v => { qc.setQueryData<Video[]>(keys.videos, old => [v, ...(old ?? []).filter(x => x.id !== v.id)]); void qc.invalidateQueries({ queryKey: keys.videos }); toast({ tone: 'info', title: 'Analysing new footage', body: v.drive ?? v.filename }); },
+    // 409 is "nothing new in the VAST index": information, not a failure
+    onError: e => toast({ tone: (e as { status?: number }).status === 409 ? 'info' : 'bad', title: (e as { status?: number }).status === 409 ? 'Up to date' : 'Run failed', body: (e as Error).message }),
+  });
+}
 export function useTopic(query: string) {
   const c = useClient(); const q = query.trim();
   return useQuery({ queryKey: keys.topic(q), queryFn: ({ signal }) => c.searchTopic(q, signal), enabled: c.capabilities.topicSearch && q.length > 2, staleTime: 5 * 60_000 });

@@ -6,7 +6,7 @@ import { ApiError, type Capabilities, type RaightwayClient, type UploadOptions }
 
 export interface Endpoints {
   videos: string; video: string; issues: string; similar: string; frame: string;
-  report: string; regenerateReport: string; dispatch: string; upload: string; search: string;
+  report: string; regenerateReport: string; dispatch: string; upload: string; run: string; search: string;
   hazards: string; directions: string;
   /** Optional: a playable file per video, e.g. "/api/videos/{id}/file". */
   videoFile: string | null;
@@ -14,7 +14,7 @@ export interface Endpoints {
 export const DEFAULT_ENDPOINTS: Endpoints = {
   videos: '/api/videos', video: '/api/videos/{id}', issues: '/api/issues', similar: '/api/issues/{id}/similar',
   frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch',
-  upload: '/api/videos', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
+  upload: '/api/videos', run: '/api/run', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
 };
 
 /** Where the backend's dispatch starts and ends every route (backend/app/planning: DEPOT). */
@@ -88,7 +88,7 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
   };
   const withVideoUrl = (v: Video): Video => (ep.videoFile && !v.video_url ? { ...v, video_url: url(ep.videoFile, v.id) } : v);
 
-  const caps: Capabilities = { upload: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: false, frames: true, directions: true, ...config.capabilities };
+  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: false, frames: true, directions: true, ...config.capabilities };
   return {
     id: 'http', label: config.label ?? 'API', capabilities: caps,
     async listVideos(signal) { const raw = (tx.videos ?? (x => x))(await request('GET', url(ep.videos), { signal })); return parse.videos((Array.isArray(raw) ? raw : []).map(normVideo)).map(withVideoUrl); },
@@ -101,6 +101,8 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     async similar(id, signal) { return parse.similar((tx.similar ?? (x => x))(await request('GET', url(ep.similar, id), { signal, allow404: true }))); },
     async getReport(signal) { const raw = await request('GET', url(ep.report), { signal, allow404: true }); return raw == null ? null : parse.report((tx.report ?? (x => x))(raw)); },
     async regenerateReport() { return parse.report((tx.report ?? (x => x))(await request('POST', url(ep.regenerateReport), { timeoutMs: slowTimeout }))); },
+    // The backend re-reads the VAST index before it answers, so this can take tens of seconds.
+    async run() { return withVideoUrl(parse.video(normVideo((tx.video ?? (x => x))(await request('POST', url(ep.run), { timeoutMs: slowTimeout }))))); },
     async dispatch(crews: CrewCounts) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews }, timeoutMs: slowTimeout }))); },
     async hazards(signal) { return caps.directions ? parse.hazards((tx.hazards ?? (x => x))(await request('GET', url(ep.hazards), { signal, allow404: true }))) : []; },
     async directions(origin: LatLon, destination: LatLon) { return parse.directions((tx.directions ?? (x => x))(await request('POST', url(ep.directions), { json: { origin, destination }, timeoutMs: 45_000 }))); },

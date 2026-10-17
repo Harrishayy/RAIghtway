@@ -48,7 +48,7 @@ styles/                       tokens.css → components.css → app.css
 
 | Screen (route) | Feature files | Client calls (backend endpoint) |
 |---|---|---|
-| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `searchTopic` (VSS, only when `capabilities.topicSearch`; off on the FastAPI backend) |
+| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `run` (`POST /api/run`, the Footage pane's Run button), `searchTopic` (VSS, only when `capabilities.topicSearch`; off on the FastAPI backend) |
 | Issues | `features/issues/IssuesView` + `IssueCard` | `listIssues` (`/api/issues`), `similar` |
 | Report | `features/report/ReportView` | `getReport` / `regenerateReport` (`/api/report`) |
 | Dispatch | `features/dispatch/DispatchView`, `RoadsPanel` + `features/map` | `dispatch` (`POST /api/dispatch`), `hazards` (`/api/hazards`), `directions` (`POST /api/directions`) |
@@ -103,7 +103,7 @@ Keep these signals when you redesign a screen. Never label a fallback as the spo
 1. `pnpm check`.
 2. `pnpm dev`, then click through Review → Issues → Report → Dispatch.
 3. On Review, drag the pane borders to their extremes and swap panes. Nothing should overlap or spill out.
-4. Plan routes on Dispatch. (The upload button is removed from the UI; `features/upload/UploadButton.tsx` and `client.upload` remain if it comes back.)
+4. On sample data, press Run on Review to watch a live analysis. Plan routes on Dispatch. (The upload button is removed from the UI; `features/upload/UploadButton.tsx` and `client.upload` remain if it comes back.)
 
 ## Gotchas
 

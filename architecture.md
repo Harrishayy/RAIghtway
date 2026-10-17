@@ -197,7 +197,9 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 - **Budget:** about 50 segments should take a few minutes on the shared GPUs (an estimate; measure with Weave). Only widen the sample if it finishes quickly and the map looks thin.
 
 ### 3.7 Report
-- **Inputs:** open canonical issues, giving counts by category and severity, a top-priority list, and each crew type's workload (the sum of its work-order minutes).
+- **Severity rating pass first** (`app/ai/rating.py`): Cosmos3-Reason re-grades each sighting from its keyframe (the frame with the box drawn on plus a close-up), against the rubric and per-category anchors in `prompts.py`, and returns a one-sentence reason and a verdict; Nemotron Super-VL answers when Cosmos can't. Ratings are rows on top of the insert-only issue rows (`state/ratings.jsonl` and the VastDB `ratings` table; newest per issue wins), so the find grade is kept and a re-grade can be undone. Live uploads are rated within a 15 s budget; `scripts/rate_severity.py` rates the corpus and `--eval` checks it against hand labels.
+- **Inputs:** open canonical issues (rejected ones counted apart), giving counts by category and severity, a top-priority list, and each crew type's workload (the sum of its work-order minutes).
+- **Detail, all computed in code:** per-category sections (counts, worst findings with the rater's reason, workload, crews, equipment from work orders), a priority list with deadlines, hotspots (findings within 300 m, weighted by severity, named by the nearest street from OSRM) and provenance (which models answered, coverage, caveats). Nemotron writes the summary, rationale, a repair approach per category and a note per hotspot; the template covers every part when it fails.
 - **Crew numbers:** a baseline per type of ceil(workload × 1.3 ÷ 480 min), computed in code so the LLM doesn't do arithmetic. Nemotron writes the summary and recommended crews with reasoning as JSON, which we validate.
 - **Freshness:** regenerated in the background after each analysis (at most once a minute during pre-compute); `POST /api/report` forces it. Meanwhile the UI shows the previous report marked "updating".
 - **Hand-off:** the recommended crews pre-fill the dispatch form, and the manager can change them.
@@ -250,12 +252,35 @@ class Issue(BaseModel):
     duplicate_of: str | None = None                    # set on re-sightings
     sightings: int = 1                                 # canonical: 1 + re-sightings
     work_order: WorkOrder | None = None                # canonical issues only
+    featured: int | None = None                        # demo rank from backend/app/curation.json, 1 first
+    # severity rating pass (backend/app/ai/rating.py), all optional; absent = the find pass's grade
+    severity_reason: str | None = None                 # one sentence: what the rater saw, why this grade
+    severity_model: str | None = None                  # "cosmos3-reason" | "nemotron-super-vl" (fallback)
+    verdict: Literal["confirmed","rejected"] | None = None   # rejected = not a real defect; kept, never deleted,
+                                                       # left out of report counts, dispatch and dashcam hazards
+    find_severity: int | None = None                   # the find pass's grade before re-grading
 class Video(BaseModel):
     id: str; filename: str; source: Literal["upload","corpus"]
     status: Literal["queued","analysing","done","failed"]; progress: float; stage: str | None = None
     drive: str | None = None; start_s: float = 0; duration_s: float = 0   # drive e.g. "set04/video_0008"
     explanation: str | None = None; issue_ids: list[str] = []; track: list[tuple[float, float]] = []
 class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[str, int]; crews: dict[Crew, int]; rationale: str
+    # optional detail (older reports lack it; figures come from code, Nemotron writes prose only):
+    model: str | None                                  # display name of the model that wrote the prose
+    stats: ReportStats | None                          # open, today (S5), this_week (S4), this_month (S3), routine,
+                                                       # located, drives, crews, crew_hours, rejected
+    sections: list[ReportSection] = []                 # per category: open, by_severity {"1".."5"}, severe, rejected,
+                                                       # work_minutes, crew_hours, crews, equipment [{label,count}],
+                                                       # top: list[ReportIssue], approach (Nemotron, else template)
+    priorities: list[ReportIssue] = []                 # every open severity 4-5 issue, worst first
+    hotspots: list[ReportHotspot] = []                 # id, label, lat, lon, radius_m, issues, severe, max_severity,
+                                                       # score, categories, drives, issue_ids, note
+    provenance: ReportProvenance | None                # report_model, find_model, rating_models {model: n}, unrated,
+                                                       # rejected, sightings_total, canonical, duplicates_merged,
+                                                       # with_embedding/gps/box, work_orders, template_work_orders, caveats
+class ReportIssue:          id, category, severity, severity_reason, description, video_id, drive, t, lat, lon,
+                            place (nearest street), sightings, confidence, deadline ("today"|"this week"|"this month"|
+                            "routine"), crew, repair, minutes
 class Route(BaseModel):     crew_id: str; crew: Crew; stops: list[str]; eta_min: list[int]; path: list[tuple[float, float]]
     # optional extras: facility_id, depot, depot_label, distance_km, path_source ("road"|"straight"),
     # warnings: list[RouteWarning], maps_urls, brief (plain-text run sheet)
@@ -271,6 +296,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | Endpoint | Returns |
 |---|---|
 | `POST /api/videos` (multipart, one file; the UI loops for several) | `Video`; analysis starts |
+| `POST /api/run` | `Video`; re-reads the VAST index, picks up to 30 s of footage no pass has analysed (held-back demo segments first) and analyses it live. 409 when there is nothing new |
 | `GET /api/videos` | `Video[]`, including live progress and stage (polled) |
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |
@@ -284,6 +310,7 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | `POST /api/directions` `{origin, destination}` | `Directions`: road path around closures |
 | `GET /api/health` | `{ok, store_source}` |
 | `POST /api/admin/precompute/start`, `/stop`; `POST /api/admin/reset` | Admin only, not in the UI. Reset hides uploads made before it (the cutoff is kept in the local snapshot) |
+| `GET`/`POST /api/admin/demo` `{on: bool}` | Admin only. Demo mode (off by default; `DEMO_CURATION=1` at start): issues carry `featured` ranks from `backend/app/curation.json`, reviewed false positives are hidden from issues, report, dispatch and hazards, and `/api/videos` lists only uploads, running jobs and drives holding a pick. Off, every endpoint serves the pipeline's data untouched. The choice persists in `state/demo_curation.json` |
 
 ---
 

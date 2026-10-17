@@ -102,3 +102,21 @@ def still_clip(jpg: str, out: str) -> str:
     """1 s, 8 fps clip of a still image: the embedding input."""
     _run(["-loop", "1", "-i", jpg, "-t", "1", "-r", "8", "-c:v", "libx264", "-pix_fmt", "yuv420p", out])
     return out
+
+
+def rating_views(jpg: str, bbox, frame_out: str, zoom_out: str) -> tuple[str, str]:
+    """The severity rater's two inputs: the frame (1280 wide) with the box outlined, and a clean close-up of the
+    box plus half its size on each side (at least 12% of the frame), long side 768 px. No box: the whole frame."""
+    if bbox is None:
+        _run(["-i", jpg, "-vf", "scale=1280:-2", "-frames:v", "1", "-q:v", "3", frame_out])
+        _run(["-i", jpg, "-vf", "scale=768:-2", "-frames:v", "1", "-q:v", "3", zoom_out])
+        return frame_out, zoom_out
+    box = (f"drawbox=x=iw*{bbox.x:.4f}:y=ih*{bbox.y:.4f}:w=iw*{bbox.w:.4f}:h=ih*{bbox.h:.4f}"
+           ":color=yellow@0.95:t=2,scale=1280:-2")
+    _run(["-i", jpg, "-vf", box, "-frames:v", "1", "-q:v", "3", frame_out])
+    cx, cy = bbox.x + bbox.w / 2, bbox.y + bbox.h / 2
+    w, h = max(bbox.w * 2, 0.12), max(bbox.h * 2, 0.12)
+    zoom = (f"crop=w='min(iw,iw*{w:.4f})':h='min(ih,ih*{h:.4f})':x='clip(iw*{cx:.4f}-ow/2,0,iw-ow)'"
+            f":y='clip(ih*{cy:.4f}-oh/2,0,ih-oh)',scale='if(gt(iw,ih),768,-2)':'if(gt(iw,ih),-2,768)'")
+    _run(["-i", jpg, "-vf", zoom, "-frames:v", "1", "-q:v", "3", zoom_out])
+    return frame_out, zoom_out

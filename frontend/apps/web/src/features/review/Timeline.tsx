@@ -1,20 +1,19 @@
 'use client';
-// Ruler, one lane per category with each finding at its exact time, a topic-search lane, a speed lane
+// Ruler, one lane per category with each finding at its exact time, a VSS search lane, a speed lane
 // and the playhead. Press and drag anywhere on a lane to scrub.
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import { CATEGORY, clamp, fmtClock, type CategoryId, type Issue, type TopicHit, type Video } from '@raightway/core';
-import { useClient } from '@/domain/client';
-import { useTopic } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
 import { useSize } from '@/lib/useSize';
 import { Icon } from '@/ui/Icon';
+import { useFootageSearch } from './FootageSearch';
 
 export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[]; cats: CategoryId[] }) {
-  const client = useClient(); const dur = Math.max(1, video.duration_s);
+  const dur = Math.max(1, video.duration_s);
   const { t, selectedIssue, seek, select, setPlaying } = usePlayback();
   const ruler = useRef<HTMLDivElement>(null); const { width } = useSize(ruler);
-  const [query, setQuery] = useState(''); const [draft, setDraft] = useState('');
-  const topic = useTopic(query); const hits: TopicHit[] = (topic.data ?? []).filter(h => h.video_id === video.id);
+  // the query is typed in the footage list (FootageSearch); this lane shows its matches on the open drive
+  const { topic: query, found: topic, hits: all } = useFootageSearch(); const hits: TopicHit[] = (all ?? []).filter(h => h.video_id === video.id);
   const room = Math.max(2, Math.floor((width || 400) / 58));
   const step = [5, 10, 15, 30, 60, 120, 180, 300, 600].find(s => dur / s <= room) ?? 600;
   const ticks: number[] = []; for (let s = 0; s < dur - step * 0.4; s += step) ticks.push(s);
@@ -24,19 +23,13 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
   }, [video.gps, dur, t]);
 
   const scrub = (e: React.PointerEvent<HTMLDivElement>) => {
-    const track = (e.target as HTMLElement).closest<HTMLElement>('[data-seek]'); if (!track || (e.target as HTMLElement).closest('.mk')) return;
+    const track = (e.target as HTMLElement).closest<HTMLElement>('[data-seek]'); if (!track || (e.target as HTMLElement).closest('.mk, .band')) return;
     const r = track.getBoundingClientRect(); setPlaying(false); const lanes = e.currentTarget;
     const go = (x: number) => seek(clamp((x - r.left) / r.width, 0, 1) * dur);
     go(e.clientX); lanes.setPointerCapture(e.pointerId); lanes.onpointermove = ev => go(ev.clientX); lanes.onpointerup = () => { lanes.onpointermove = null; };
   };
   return (
     <div className="tl">
-      {client.capabilities.topicSearch && (
-        <form className="topic" onSubmit={e => { e.preventDefault(); setQuery(draft); }} role="search">
-          <label className="search search-in"><Icon name="search" /><span className="sr">Search this footage</span><input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Search footage, e.g. tags on shutters" /></label>
-          {query ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setQuery(''); setDraft(''); }}>Clear</button> : null}
-        </form>
-      )}
       <div className="tl-ruler" ref={ruler} aria-hidden="true">{ticks.map(s => <span key={s} style={{ left: `${(s / dur) * 100}%` }}>{fmtClock(s)}</span>)}</div>
       <div className="tl-lanes" onPointerDown={scrub}>
         {cats.map(c => {
@@ -51,10 +44,11 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
             </div>
           );
         })}
-        {query && (
-          <div className="lane">
-            <span className="lane-l" title={`“${query}”: ${hits.length} hits`}><Icon name="search" /><span className="ll">“{query}”</span><b>{topic.isFetching ? '…' : hits.length}</b></span>
-            <span className="lane-t" data-seek>{hits.map((h, i) => <span key={i} className="band" style={{ left: `${(h.start / dur) * 100}%`, width: `${((h.end - h.start) / dur) * 100}%`, opacity: 0.45 + h.score * 0.55 }} title={`${fmtClock(h.start)}–${fmtClock(h.end)} · ${h.caption}`} />)}</span>
+        {query.length > 2 && (
+          <div className="lane lane-vss">
+            <span className="lane-l" title={topic.isError ? 'VSS search unavailable' : `VSS search “${query}”: ${hits.length} matches on this drive`}><Icon name={topic.isError ? 'alert' : 'search'} /><span className="ll">“{query}”</span><b>{topic.isError ? '!' : topic.isFetching && !all ? '…' : hits.length}</b></span>
+            <span className="lane-t" data-seek>{hits.map((h, i) => <button key={i} type="button" className="band" style={{ left: `${(h.start / dur) * 100}%`, width: `${(Math.max(h.end - h.start, 1) / dur) * 100}%`, opacity: 0.45 + h.score * 0.55 }}
+              aria-label={`VSS match ${fmtClock(h.start)} to ${fmtClock(h.end)}: ${h.caption}`} title={`${fmtClock(h.start)}–${fmtClock(h.end)} · ${h.caption}`} onClick={() => { setPlaying(false); seek(h.start); }} />)}</span>
           </div>
         )}
         {speed && (

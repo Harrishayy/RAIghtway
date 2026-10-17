@@ -67,3 +67,17 @@ export const MODELS: readonly ModelDef[] = [
 /** Shift length used by dispatch (architecture §3.8). */
 export const SHIFT_MINUTES = 480;
 export const SHIFT_START_MINUTES = 8 * 60;
+
+/** Who graded an issue's severity (Issue.severity_model) or wrote the report prose (ReportProvenance.report_model).
+ * `fallback` marks a stand-in for the primary sponsor path, so the UI never presents it as the primary. */
+export interface RaterDef { id: string; name: string; vendor: string; fallback: boolean }
+export const RATERS: Record<string, RaterDef> = {
+  'cosmos3-reason': { id: 'cosmos3-reason', name: 'Cosmos3-Reason', vendor: 'NVIDIA', fallback: false },
+  'nemotron-super-vl': { id: 'nemotron-super-vl', name: 'Nemotron Super-VL', vendor: 'NVIDIA via W&B', fallback: true },
+  'nemotron-ultra': { id: 'nemotron-ultra', name: 'Nemotron 3 Ultra', vendor: 'NVIDIA via W&B', fallback: false },
+  'nemotron-lightning': { id: 'nemotron-lightning', name: 'Nemotron 3.5 Lightning', vendor: 'NVIDIA via W&B', fallback: true },
+  template: { id: 'template', name: 'Application template', vendor: 'no model', fallback: true },
+  review: { id: 'review', name: 'Manual review', vendor: 'human', fallback: false },
+};
+export const raterDef = (id: string | null | undefined): RaterDef | null =>
+  id ? RATERS[id] ?? { id, name: id, vendor: '', fallback: false } : null;

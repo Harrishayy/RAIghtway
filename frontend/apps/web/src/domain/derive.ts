@@ -19,6 +19,11 @@ export function fixAt(video: Video | undefined, t: number): { at: LatLon; headin
 
 export const byTime = (a: Issue, b: Issue) => a.t - b.t;
 
+/** Demo rank from the footage review; unranked issues sort after every pick. */
+export const pickRank = (i: Issue) => i.featured ?? Infinity;
+/** The issue a drive should open on: its best demo pick, else its first finding. */
+export const landingIssue = (issues: Issue[]) => [...issues].sort((a, b) => pickRank(a) - pickRank(b) || a.t - b.t)[0];
+
 /** The finding the frame should show at t: nearest within a short window, else none. */
 export function issueAt(issues: Issue[], t: number): Issue | null {
   let best: Issue | null = null, bd = Infinity;

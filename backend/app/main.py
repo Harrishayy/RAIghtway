@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from app import config, store
+from app import config, curation, store
 from app.models import (CREW_FOR, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Report, Route,
                         SimilarIssue, Video, VideoRecord)
 
@@ -179,7 +179,9 @@ def _video(record: VideoRecord) -> Video:
 
 
 def _issue(record: IssueRecord) -> Issue:
-    return Issue.model_validate(record.model_dump(include=set(Issue.model_fields)))
+    issue = Issue.model_validate(record.model_dump(include=set(Issue.model_fields)))
+    issue.featured = curation.featured(record.id)
+    return issue
 
 
 def _require_video(id: str) -> VideoRecord:
@@ -244,9 +246,34 @@ async def upload_video(file: UploadFile = File(...)):
     return _video(video)
 
 
+@app.post("/api/run", response_model=Video)
+async def run_next():
+    """Analyse the next stretch of footage the VAST index has and we haven't seen, live (app/pipeline/run.py)."""
+    run = importlib.import_module("app.pipeline.run")
+    try:
+        video, go = await run.start(_run_analysis)
+    except run.NothingToRun as exc:
+        raise HTTPException(409, str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except Exception as exc:
+        log.warning("Run failed to start (%s)", config.redact(exc))
+        raise HTTPException(503, "Run unavailable") from None
+    task = asyncio.create_task(go())
+    _analysis_tasks.add(task)
+    task.add_done_callback(_analysis_tasks.discard)
+    return _video(video)
+
+
 @app.get("/api/videos", response_model=list[Video])
 def videos():
-    return [_video(v) for v in store.list_videos()]
+    listed = store.list_videos()
+    if curation.enabled():
+        by_video: dict[str, list] = {}
+        for i in store.canonical_issues():
+            by_video.setdefault(i.video_id, []).append(i)
+        listed = [v for v in listed if curation.keep_video(v, by_video)]
+    return [_video(v) for v in listed]
 
 
 class VideoDetail(BaseModel):
@@ -257,7 +284,7 @@ class VideoDetail(BaseModel):
 @app.get("/api/videos/{id}", response_model=VideoDetail)
 def video_detail(id: str):
     video = _require_video(id)
-    return VideoDetail(video=_video(video), issues=[_issue(i) for i in store.issues_for_video(id)])
+    return VideoDetail(video=_video(video), issues=[_issue(i) for i in curation.visible(store.issues_for_video(id))])
 
 
 @app.get("/api/videos/{id}/file")
@@ -274,7 +301,7 @@ def video_file(id: str):
 
 @app.get("/api/issues", response_model=list[Issue])
 def issues():
-    return [_issue(i) for i in store.canonical_issues()]
+    return [_issue(i) for i in curation.visible(store.canonical_issues())]
 
 
 @app.get("/api/issues/{id}/similar", response_model=list[SimilarIssue])
@@ -292,6 +319,26 @@ def similar_issues(id: str):
     search = "vastdb" if path == "adbc" else "local"
     return [SimilarIssue(**_issue(canonical[match_id]).model_dump(), distance=round(distance, 4), search=search)
             for match_id, distance in matches if match_id in canonical and match_id != id][:5]
+
+
+class SearchRequest(BaseModel):
+    query: str
+
+
+@app.post("/api/search")
+async def search_footage(body: SearchRequest):
+    """Plain-language search over the VSS index, as bands on the drives the console lists. No fallback: 503."""
+    try:
+        topic_search = importlib.import_module("app.pipeline.topic_search")
+    except Exception as exc:
+        log.warning("Footage search unavailable (%s)", config.redact(exc))
+        raise HTTPException(503, "VSS search is unavailable") from None
+    try:
+        return await topic_search.search(body.query, {v.id: v for v in videos()})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except topic_search.SearchUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
 
 
 @app.get("/api/frames/{issue_id}")
@@ -422,6 +469,21 @@ def reset():
     return {"reset_cutoff": store.reset()}
 
 
+class DemoToggle(BaseModel):
+    on: bool
+
+
+@app.get("/api/admin/demo")
+def demo_status():
+    return {"on": curation.enabled()}
+
+
+@app.post("/api/admin/demo")
+def demo_toggle(request: DemoToggle):
+    """Demo mode: reviewed picks first, only their drives, rejected findings hidden. Off = the raw pipeline."""
+    return {"on": curation.set_enabled(request.on)}
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "store_source": store.source()}
+    return {"ok": True, "store_source": store.source(), "demo_curation": curation.enabled()}

@@ -30,6 +30,11 @@ export const IssueSchema = z.looseObject({
   place: z.string().optional().catch(undefined), sighting_refs: z.array(SightingRef).optional().catch(undefined),
   frame_seed: z.number().optional().catch(undefined), provisional: z.boolean().optional().catch(undefined),
   source: z.enum(['upload', 'corpus']).optional().catch(undefined),
+  featured: z.coerce.number().int().positive().nullable().optional().catch(undefined),
+  severity_reason: z.string().nullable().optional().catch(undefined),
+  severity_model: z.string().nullable().optional().catch(undefined),
+  verdict: z.enum(['confirmed', 'rejected']).nullable().optional().catch(undefined),
+  find_severity: z.coerce.number().int().min(1).max(5).nullable().optional().catch(undefined),
 });
 
 export const TrackPoint = z.object({ t: num(), lat: num(), lon: num(), heading: num(), speed_kmh: num() });
@@ -49,9 +54,44 @@ export const VideoSchema = z.looseObject({
 });
 
 const countMap = z.record(z.string(), z.coerce.number()).catch({});
+const sev = z.coerce.number().int().min(1).max(5).catch(3);
+const nstr = z.string().nullable().optional().catch(undefined);
+/** Parses a list leniently: bad items are dropped, not the whole list (used for report sections). */
+const lenientList = <T extends z.ZodTypeAny>(item: T) => z.array(z.unknown()).catch([]).transform(arr => arr.flatMap(x => { const r = item.safeParse(x); return r.success ? [r.data as z.infer<T>] : []; }));
+export const ReportIssueSchema = z.object({
+  id: z.coerce.string(), category: CategoryId, severity: sev, severity_reason: nstr, description: str(),
+  video_id: str(), drive: nstr, t: num(0), lat: nullableNum.optional(), lon: nullableNum.optional(), place: nstr,
+  sightings: num(1), confidence: num(0), deadline: z.enum(['today', 'this week', 'this month', 'routine']).catch('routine'),
+  crew: CrewType, repair: nstr, minutes: num(0),
+});
+export const ReportSectionSchema = z.object({
+  category: CategoryId, crew: CrewType, open: num(0), by_severity: countMap, severe: num(0), rejected: num(0),
+  work_minutes: num(0), crew_hours: num(0), crews: num(0),
+  equipment: z.array(z.object({ label: str(), count: num(0) })).catch([]),
+  top: lenientList(ReportIssueSchema), approach: nstr,
+});
+export const ReportHotspotSchema = z.object({
+  id: z.coerce.string(), label: str(), lat: z.coerce.number(), lon: z.coerce.number(), radius_m: num(300), issues: num(0),
+  severe: num(0), max_severity: num(1), score: num(0), categories: countMap,
+  drives: z.array(z.coerce.string()).catch([]), issue_ids: z.array(z.coerce.string()).catch([]), note: nstr,
+});
+export const ReportStatsSchema = z.object({
+  open: num(0), today: num(0), this_week: num(0), this_month: num(0), routine: num(0), located: num(0), drives: num(0),
+  crews: num(0), crew_hours: num(0), rejected: num(0),
+});
+export const ReportProvenanceSchema = z.object({
+  report_model: str('template'), find_model: str('cosmos3-reason'), rating_models: countMap, unrated: num(0), rejected: num(0),
+  sightings_total: num(0), canonical: num(0), duplicates_merged: num(0), with_embedding: num(0), with_gps: num(0),
+  with_box: num(0), work_orders: num(0), template_work_orders: num(0), caveats: z.array(z.coerce.string()).catch([]),
+});
 export const ReportSchema = z.looseObject({
   generated_at: str(), summary: str(), counts: countMap, crews: countMap, rationale: str(),
-  rationale_by_crew: z.record(z.string(), z.string()).optional().catch(undefined), model: z.string().optional().catch(undefined),
+  rationale_by_crew: z.record(z.string(), z.string()).optional().catch(undefined), model: z.string().nullable().optional().catch(undefined),
+  stats: ReportStatsSchema.nullable().optional().catch(undefined),
+  sections: lenientList(ReportSectionSchema).optional(),
+  priorities: lenientList(ReportIssueSchema).optional(),
+  hotspots: lenientList(ReportHotspotSchema).optional(),
+  provenance: ReportProvenanceSchema.nullable().optional().catch(undefined),
 });
 const optStr = z.string().nullable().optional().catch(undefined);
 export const RouteWarningSchema = z.object({ hazard_id: z.coerce.string(), label: str(), source: z.enum(['city', 'dashcam']).catch('city'), avoided: z.boolean().catch(false) });

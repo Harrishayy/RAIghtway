@@ -8,6 +8,7 @@ call it from async code with asyncio.to_thread.
 import base64
 import json
 import logging
+import re
 from pathlib import Path
 from threading import RLock
 import time
@@ -130,23 +131,41 @@ def metadata_values(field: str, prefix: str = "") -> list:
 def search(query: str, top_k: int = 100, camera_id: str = "pie_cam-3",
            hybrid_text_weight: float = 0.2, min_similarity: float = 0.15) -> list[dict]:
     """Segment hits (`results[]`) for a query; cached by request so it runs once."""
-    body = {"query": query, "top_k": min(top_k, 100), "llm_top_n": 1,   # the API rejects 0
+    return search_full(query, top_k, camera_id, hybrid_text_weight, min_similarity)["results"]
+
+
+def _synthesis(value) -> str:
+    """The **Answer** part of VSS's `llm_synthesis` ({"response": markdown}); its "Notable moments" use clip-relative times."""
+    text = value.get("response") if isinstance(value, dict) else value
+    if not isinstance(text, str):
+        return ""
+    text = re.split(r"\*\*\s*Notable moments", text, maxsplit=1, flags=re.IGNORECASE)[0]
+    text = re.sub(r"^\s*\*\*\s*Answer\s*\*\*\s*", "", text, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", text.replace("**", "")).strip()
+
+
+def search_full(query: str, top_k: int = 100, camera_id: str = "pie_cam-3",
+                hybrid_text_weight: float = 0.2, min_similarity: float = 0.15, llm_top_n: int = 1) -> dict:
+    """{"results": segment hits, "synthesis": VSS's LLM answer or "", "cached": bool}, cached like search()."""
+    body = {"query": query, "top_k": min(top_k, 100), "llm_top_n": max(1, llm_top_n),   # the API rejects 0
             "min_similarity": min_similarity, "hybrid_text_weight": hybrid_text_weight,
             "time_filter": "all", "metadata_filters": {"camera_id": camera_id}}
     key = json.dumps(body, sort_keys=True)
     with _lock:
         cache = _load_cache()
         if key in cache:
-            return cache[key]["results"]
+            entry = cache[key]
+            return {"results": entry["results"], "synthesis": entry.get("synthesis", ""), "cached": True}
         try:
             data = _authed("POST", "/api/v1/search", json=body).json()
         except Exception as exc:
             raise RuntimeError(f"VSS search failed ({config.redact(exc)})") from None
         results = [r for r in data.get("results", []) if isinstance(r, dict)]
-        cache[key] = {"results": results, "at": time.time()}
+        synthesis = _synthesis(data.get("llm_synthesis"))
+        cache[key] = {"results": results, "synthesis": synthesis, "at": time.time()}
         _save_cache()
         log.info("VSS search %r: %d hits", query, len(results))
-        return results
+        return {"results": results, "synthesis": synthesis, "cached": False}
 
 
 def stream_url(source: str) -> str:

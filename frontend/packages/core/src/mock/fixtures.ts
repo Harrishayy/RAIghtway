@@ -57,6 +57,27 @@ function workOrder(cat: CategoryId, sev: Severity, rnd: Rnd): WorkOrder {
   return { repair: nearestKey(REPAIR[cat], sev), crew: CREW_FOR[cat], minutes, equipment: [...eq].sort(() => rnd() - 0.5).slice(0, n), urgency: severityDef(sev).urgency };
 }
 
+// The severity rating pass, as the backend's Cosmos3-Reason rater words it: a reason per category and level,
+// and about one finding in twelve judged not to be a defect (kept, never deleted).
+const RATED_REASON: Record<CategoryId, string[]> = {
+  pavement: ['Hairline cracks only; cosmetic.', 'Isolated cracks outside the wheel path.', 'Failed patch forming a pothole at the curb.', 'Pothole with broken edges in the wheel path of a travel lane.', 'Deep, wide pothole across the lane; vehicles must swerve.'],
+  markings: ['Paint slightly faded but clear.', 'Lines worn but still readable.', 'Crosswalk stripes faded and hard to see in places.', 'Stop line and crosswalk largely gone at a busy intersection.', 'No visible crosswalk at a signalised crossing.'],
+  work_zone: ['Tidy closure fully off the roadway.', 'Signed, coned lane closure in good order.', 'Work trucks occupy a travel lane with cones.', 'Knocked-over barrels intrude into traffic with no taper.', 'Open excavation beside a live lane with no barrier.'],
+  signage: ['Small sticker on an intact sign.', 'Sign slightly tilted but readable.', 'Sign bent and partly obscured but recognisable.', 'Stop sign defaced with stickers and paint.', 'Stop sign knocked down at the intersection.'],
+  graffiti: ['Small tag on a utility box.', 'Tagging on a wall beside the sidewalk.', 'Large, repeated tags across a public wall.', 'Paint covering part of a traffic sign.', 'Paint makes a regulatory sign unreadable.'],
+  waste: ['A few pieces of litter.', 'Litter build-up along the curb.', 'Dumped bags on the boulevard.', 'Bulky items blocking the sidewalk.', 'Debris in a live travel lane.'],
+};
+const REJECTED_REASON: Record<CategoryId, string> = {
+  pavement: 'Sound pavement; the dark area is a shadow, not a pothole.', markings: 'Crosswalk stripes are crisp and fully visible.',
+  work_zone: 'A parked truck with no cones or crew; not a work zone.', signage: 'Sign is intact and legible; only small and distant.',
+  graffiti: 'A commissioned mural, not graffiti.', waste: 'A store sign, not dumped waste.',
+};
+function rated(id: string, cat: CategoryId, sev: Severity): Pick<Issue, 'severity_reason' | 'severity_model' | 'verdict' | 'find_severity'> {
+  const h = hashStr(`rate-${id}`);
+  if (h % 12 === 0) return { severity_reason: REJECTED_REASON[cat], severity_model: 'cosmos3-reason', verdict: 'rejected', find_severity: sev };
+  return { severity_reason: RATED_REASON[cat][sev - 1], severity_model: h % 17 === 0 ? 'nemotron-super-vl' : 'cosmos3-reason', verdict: 'confirmed', find_severity: Math.max(1, Math.min(5, sev + ((h >> 3) % 3) - 1)) };
+}
+
 export function buildIssue(o: { id: string; video: Video; t: number; axis: Axis; line: number; pos: number; cat: CategoryId; sev: Severity; rnd: Rnd; source?: 'upload' | 'corpus' }): Issue {
   const off = (o.rnd() - 0.5) * 0.05; const line = o.line + off;
   const [lat, lon] = o.axis === 'row' ? gridLL(line, o.pos) : gridLL(o.pos, line);
@@ -68,7 +89,7 @@ export function buildIssue(o: { id: string; video: Video; t: number; axis: Axis;
     description: pickOf(o.rnd, nearestKey(DESC[o.cat], o.sev)), frame_url: `/api/frames/${o.id}`, frame_seed: hashStr(o.id),
     bbox: bboxFor(o.cat, o.rnd), lat, lon, place: placeName(o.axis, o.line, o.pos),
     duplicate_of: null, sightings: 1, sighting_refs: [{ video_id: o.video.id, drive: o.video.drive, t }],
-    work_order: workOrder(o.cat, o.sev, o.rnd), source: o.source ?? 'corpus',
+    work_order: workOrder(o.cat, o.sev, o.rnd), source: o.source ?? 'corpus', ...rated(o.id, o.cat, o.sev),
   };
 }
 

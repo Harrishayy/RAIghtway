@@ -20,9 +20,11 @@ export interface IssueSummary {
 }
 
 export const isCanonical = (i: Issue) => !i.duplicate_of && !i.provisional;
+/** Open work: canonical and not judged a false positive by the severity rater (backend leaves those out too). */
+export const isOpen = (i: Issue) => isCanonical(i) && i.verdict !== 'rejected';
 
 export function summarizeIssues(issues: Issue[], enabled: readonly CategoryId[] = CATEGORIES.map(c => c.id)): IssueSummary {
-  const open = issues.filter(i => isCanonical(i) && enabled.includes(i.category));
+  const open = issues.filter(i => isOpen(i) && enabled.includes(i.category));
   const matrix: IssueSummary['matrix'] = {};
   enabled.forEach(c => { matrix[c] = [0, 0, 0, 0, 0]; });
   const workload: CrewCounts = {}, jobs: CrewCounts = {};

@@ -19,7 +19,7 @@ import logging
 import math
 import time
 
-from app import config, store
+from app import config, curation, store
 from app.ai.prompts import DEFAULT_MINUTES
 from app.geo import roads
 from app.geo.distance import LatLon, km
@@ -53,7 +53,9 @@ def _minutes(issue: IssueRecord) -> int:
 
 
 def _jobs() -> list[IssueRecord]:
-    located = [i for i in store.canonical_issues() if i.lat is not None and i.lon is not None]
+    # Findings the rating pass judged not to be defects get no crew.
+    located = [i for i in curation.visible(store.canonical_issues())
+               if i.lat is not None and i.lon is not None and getattr(i, "verdict", None) != "rejected"]
     located.sort(key=lambda i: (-i.severity, -i.confidence))
     return located
 

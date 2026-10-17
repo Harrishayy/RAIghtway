@@ -45,8 +45,8 @@ def _traceable(messages: list[dict]) -> list[dict]:
 
 
 async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
-                    timeout: float | None = None) -> BaseModel:
-    """Validate JSON, retry once; timeout bounds both attempts together."""
+                    timeout: float | None = None, max_tokens: int = 4096) -> BaseModel:
+    """Validate JSON, retry once; timeout bounds both attempts together. max_tokens includes reasoning tokens."""
     request_messages = [
         {"role": "system", "content": "Return JSON only, without reasoning or markdown. "
          "Match this JSON schema: " + json.dumps(schema.model_json_schema())},
@@ -58,7 +58,7 @@ async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
     async def nemotron_json(model: str, schema_name: str, messages: list[dict]):
         for attempt in range(2):
             kwargs = {"model": model, "messages": request_messages,
-                      "temperature": 0.2, "max_tokens": 4096}
+                      "temperature": 0.2, "max_tokens": max_tokens}
             if timeout is not None:
                 kwargs["timeout"] = timeout
             response = await _get_client().chat.completions.create(**kwargs)

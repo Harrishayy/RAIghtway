@@ -31,6 +31,8 @@ _COLUMNS = {
     "reports": "generated_at summary counts crews rationale".split(),
     "plans": "generated_at crews routes unassigned solver solve_ms".split(),
     "frames": ["issue_id", "jpeg"],
+    # Severity ratings: insert-only overlay on issues; the newest row per issue_id wins (store.apply_rating_row).
+    "ratings": "issue_id severity find_severity reason model verdict observed rated_at".split(),
 }
 
 
@@ -52,6 +54,7 @@ def _schemas():
         "reports": [ts, s, s, s, s],
         "plans": [ts, s, s, s, s, i],
         "frames": [s, pa.binary()],
+        "ratings": [s, i, i, s, s, s, s, ts],
     }
     schemas = {name: pa.schema(list(zip(_COLUMNS[name], fields)))
                for name, fields in types.items()}
@@ -174,7 +177,8 @@ def insert_issues(issues: list[IssueRecord]) -> None:
 
 
 def insert_report(report: Report) -> None:
-    row = report.model_dump()
+    # The detail sections (stats, sections, hotspots…) stay in the store and snapshot; the row keeps the core.
+    row = report.model_dump(include=set(_COLUMNS["reports"]))
     row.update(generated_at=_stored_time(report.generated_at),
                counts=_json(report.counts), crews=_json(report.crews))
     _insert_rows("reports", [row])
@@ -182,10 +186,30 @@ def insert_report(report: Report) -> None:
 
 def insert_plan(plan: Plan) -> None:
     row = plan.model_dump()
+    # Street geometry and crew run sheets exceed VastDB's cell size (TabularValueTooLarge); the full plan
+    # stays in the store and snapshot, so the stored row keeps stops and ETAs only.
+    routes = [route.model_dump(mode="json") | {"path": [], "brief": None, "maps_urls": []} for route in plan.routes]
     row.update(generated_at=_stored_time(datetime.now(timezone.utc)),
                crews=_json(dict(Counter(route.crew for route in plan.routes))),
-               routes=_json(row["routes"]), unassigned=_json(plan.unassigned))
+               routes=_json(routes), unassigned=_json(plan.unassigned))
     _insert_rows("plans", [row])
+
+
+def insert_ratings(rows: list[dict]) -> None:
+    out = []
+    for row in rows:
+        out.append({"issue_id": str(row["issue_id"]), "severity": int(row.get("severity") or 0),
+                    "find_severity": int(row.get("find_severity") or 0), "reason": row.get("reason") or "",
+                    "model": row.get("model") or "", "verdict": row.get("verdict") or "",
+                    "observed": row.get("observed") or "", "rated_at": _stored_time(row["rated_at"])})
+    _insert_rows("ratings", out)
+
+
+def load_ratings() -> list[dict]:
+    rows = _read_rows("ratings", _COLUMNS["ratings"])
+    for row in rows:
+        row["rated_at"] = _utc(row["rated_at"]).isoformat()
+    return rows
 
 
 def insert_gps(rows: list[dict]) -> None:

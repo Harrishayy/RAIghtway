@@ -9,6 +9,7 @@ FastAPI app plus the video pipeline. It turns dashcam segments into deduplicated
 - **Run**: `cd backend && ./run.sh` (uvicorn on 127.0.0.1:8000). From your laptop, `pnpm dev` at the repo root starts it on the VM if needed and tunnels it to :8001. `pnpm backend:status | backend:restart | backend:logs` manage it; the log is `backend/state/uvicorn.log` on the VM.
 - **The VM backend is shared by the whole team.** Restart only after pulling backend changes there, and say so.
 - `DEMO_FIXTURES=1 ./run.sh` seeds 8 fake issues in memory, for wiring checks only.
+- **Demo mode** (`app/curation.py`, off by default) puts the hand-reviewed picks in `app/curation.json` first, lists only their drives and hides reviewed false positives. It is a view filter: stored issues, the pipeline and dedupe never change. Toggle at runtime with `pnpm demo:on` / `pnpm demo:off` from the repo root (`POST /api/admin/demo`), or start with `DEMO_CURATION=1`. `GET /api/health` reports `demo_curation`. Read issues for a console view through `curation.visible()`; pipeline code must not.
 
 ## Tests
 
@@ -31,7 +32,8 @@ app/ai/                cosmos.py (find, box) · embed.py (Cosmos-Embed1) · nemo
 app/vast/              db.py (VastDB tables, insert-only) · vector.py (ADBC cosine SQL + numpy fallback) ·
                        media.py (frames in VAST S3, or the frames table) · gatecheck.py
 app/pipeline/          piece.py (one 5 s piece → Detections) · dedupe.py (in-clip, then history) · live.py (uploads) ·
-                       precompute.py (corpus sample) · segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py
+                       precompute.py (corpus sample) · run.py (Run: unseen VAST footage, live) ·
+                       segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py
 app/geo/               gps.py (PIE 1 Hz GPS) · inventory.py (segment → drive, t) · demo.py · roads.py (OSRM) · distance.py
 app/planning/          dispatch.py (per-category bases → one cuOpt solve) · cuopt.py · report.py · hazards.py
                        (city closures + dashcam work zones) · paths.py (detours) · facilities.py/.json
@@ -49,7 +51,7 @@ Each integration has a fallback so the demo never stops. The flip side is that a
 | **Cosmos-Embed1** | `ai/embed.py` | one 256-d vector per issue crop (1 s still clip) | raises; the pipeline keeps the issue without a vector | `has_embedding = 1` rows |
 | **VastDB** | `vast/db.py` | system of record in schema `citymaint` (videos, issues, gps, reports, plans, frames) | `state/snapshot.json` | `GET /api/health` → `store_source` |
 | **VastDB vector search** | `vast/vector.py` | dedupe (category + 35 m box) and similar issues | in-memory numpy cosine for 60 s after any ADBC error | log `vector.nearest path=adbc`; the similar-issues API returns `search: "vastdb"` and the issue card shows it |
-| **VAST S3** | `vast/media.py` | keyframes (`citymaint/frames/`), uploaded originals | `MEDIA_MODE=vastdb` (frames table) | frame served when the disk cache is empty |
+| **VAST S3** | `vast/media.py`, `pipeline/run.py` | keyframes (`citymaint/frames/`), uploaded originals; Run downloads its segments from here | `MEDIA_MODE=vastdb` (frames table) | frame served when the disk cache is empty |
 | **VSS API** (VAST DataEngine index) | `pipeline/vss_client.py` | semantic search hits that widen the precompute sample; clip download; `scripts/build_inventory.py` reads `vss-collection` | skipped | log `VSS search '…': N hits` |
 | **Nemotron on W&B Inference** | `ai/nemotron.py` | work orders (Lightning), report (Ultra, then Lightning), box fallback (Super-VL) | template work orders / report | Weave trace `nemotron_json` with the text prompt and parsed reply |
 | **W&B Weave** | `ai/weave_setup.py`, `scripts/weave_eval.py` | tracing every model op; Evaluations of work orders and Cosmos find | tracing off | the W&B project `$WANDB_TEAM/$WANDB_PROJECT` |

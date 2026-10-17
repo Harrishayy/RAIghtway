@@ -2,7 +2,7 @@
 // The selected issue: what and where, how often it has been seen (each sighting seeks to it), the
 // work order, and similar past issues. Handles merged, provisional and not-yet-planned states.
 // `frame` adds the finding's frame with its box, for screens that have no player beside the card.
-import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, severityDef, type Issue, type Similar, type Urgency } from '@raightway/core';
+import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, raterDef, severityDef, type Issue, type Similar, type Urgency } from '@raightway/core';
 import { useClient } from '@/domain/client';
 import { useSimilar } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
@@ -32,8 +32,10 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
         <CategoryLabel id={issue.category} /><SevLabel level={issue.severity} />
         <Chip tone={issue.severity === 5 ? 'failed' : 'neutral'}>{sv.when}</Chip>
         {issue.provisional ? <Chip tone="live">Checking</Chip> : issue.duplicate_of ? <Chip tone="info">Merged</Chip> : null}
+        {issue.verdict === 'rejected' ? <Chip tone="neutral">Not a defect</Chip> : null}
       </div>
       <div><h4>{issue.description}</h4><p className="where">{issue.place ?? (issue.lat != null && issue.lon != null ? fmtCoord(issue.lat, issue.lon) : 'No location')}</p></div>
+      <Grade issue={issue} />
       <dl className="kv">
         <dt>Seen</dt><dd>{issue.sightings}× · first in {issue.video_id} @ {fmtTimecode(issue.t)}</dd>
         <dt>Confidence</dt><dd>{Math.round(issue.confidence * 100)}%</dd>
@@ -53,6 +55,26 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
           <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{s.issue.description}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button></li>)}</ul>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Why the issue has its severity: the rater's one-sentence reason, who graded it (a fallback says so), and the
+ * find pass's original grade when the rating changed it. Nothing when the issue was never re-graded. */
+function Grade({ issue }: { issue: Issue }) {
+  const rater = raterDef(issue.severity_model);
+  if (!rater && !issue.severity_reason) return null;
+  const rejected = issue.verdict === 'rejected';
+  const changed = issue.find_severity != null && issue.find_severity !== issue.severity;
+  return (
+    <div className={`grade${rejected ? ' rejected' : ''}`} data-sev={issue.severity}>
+      <div className="label">{rejected ? 'Judged not a defect' : 'Why this severity'}</div>
+      {issue.severity_reason ? <p>{issue.severity_reason}</p> : null}
+      <span className="muted">
+        {rater ? <>Graded by {rater.name}{rater.fallback ? ' (fallback)' : ''}</> : 'Graded'}
+        {changed ? ` · find pass said S${issue.find_severity}` : ''}
+        {rejected ? ' · kept on record, left out of the report and routes' : ''}
+      </span>
     </div>
   );
 }

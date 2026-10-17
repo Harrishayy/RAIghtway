@@ -74,3 +74,17 @@ describe('http client', () => {
     expect(r.crews).toEqual({ roads: 1 }); expect(r.crews.graffiti).toBeUndefined();
   });
 });
+
+describe('run', () => {
+  it('posts to /api/run and returns the queued video', async () => {
+    const seen: string[] = [];
+    const c = createHttpClient({ fetch: async (u, init) => { seen.push(`${init?.method} ${String(u)}`); return json({ id: 'r1', filename: 'set04_video_0008_t0300.mp4', source: 'corpus', status: 'queued', progress: 0, stage: 'fetching from VAST', drive: 'set04/video_0008', start_s: 300 }); } });
+    const v = await c.run();
+    expect(seen).toEqual(['POST /api/run']);
+    expect(v).toMatchObject({ id: 'r1', status: 'queued', drive: 'set04/video_0008' });
+  });
+  it('surfaces "nothing new" as a 409 with the backend message', async () => {
+    const c = createHttpClient({ fetch: async () => json({ detail: 'Nothing new in the VAST index: every segment has been analysed' }, 409) });
+    await expect(c.run()).rejects.toMatchObject({ status: 409, message: expect.stringContaining('Nothing new') });
+  });
+});

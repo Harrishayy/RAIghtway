@@ -6,14 +6,15 @@ import logging
 import math
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
-from pydantic import Field, RootModel
+from pydantic import BaseModel, Field, RootModel
 
 from app import config
-from app.models import BBox, Detection, FindResult
+from app.models import BBox, Detection, FindResult, SeverityRating
 from app.ai import gpu, nemotron
-from app.ai.prompts import BOX_PROMPT, FIND_PROMPT, _extract_json, normalise_category
+from app.ai.prompts import BOX_PROMPT, FIND_PROMPT, _extract_json, normalise_category, rate_prompt
 from app.ai.weave_setup import op
 
 log = logging.getLogger(__name__)
@@ -218,3 +219,91 @@ async def box(frame_path: str, category: str, description: str) -> BBox | None:
     except Exception as exc:
         log.warning("Cosmos box: no box fallback (%s)", config.redact(exc))
         return None
+
+
+# ---- Severity rating (app/ai/rating.py drives it over many issues) ----
+
+COSMOS_RATER = "cosmos3-reason"
+NEMOTRON_RATER = "nemotron-super-vl"
+_TRUE = {"true", "yes", "y", "1", "real"}
+_FALSE = {"false", "no", "n", "0", "not real", "false positive"}
+
+
+class _RateReply(BaseModel):
+    observed: str = ""
+    reason: str = ""
+    real: bool | str = True
+    severity: int | float | str
+
+
+def _parse_rating(value, model: str) -> SeverityRating:
+    """A rater's JSON -> SeverityRating. Lenient on spelling ("yes", "4"), strict on meaning: a missing or
+    out-of-range severity, or a verdict it can't read, is an error rather than a guess."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if not isinstance(value, dict):
+        raise ValueError("Rating reply must be a JSON object")
+    severity = int(round(_number(value.get("severity"))))
+    if not 1 <= severity <= 5:
+        raise ValueError("Severity out of range")
+    real = value.get("real", True)
+    if isinstance(real, str):
+        text = real.strip().lower()
+        if text not in _TRUE | _FALSE:
+            raise ValueError("Unreadable verdict")
+        real = text in _TRUE
+    observed = " ".join(str(value.get("observed") or "").split()[:30]) or None
+    reason = " ".join(str(value.get("reason") or "").split()[:40]) or observed
+    if not reason:
+        raise ValueError("Rating has no reason")
+    return SeverityRating(severity=severity, reason=reason, observed=observed, model=model,
+                          verdict="confirmed" if bool(real) else "rejected")
+
+
+def _data_url(path: str) -> str:
+    return "data:image/jpeg;base64," + base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
+
+@op
+async def rate(frame_path: str, category: str, description: str, bbox: BBox | None = None) -> SeverityRating | None:
+    """Re-grade one finding from its keyframe: Cosmos3-Reason sees the boxed frame and a close-up; Nemotron
+    Super-VL (one image per prompt) is the fallback. None when neither answers. Never raises."""
+    from app.pipeline import segment     # ffmpeg helpers; imported here to keep this module light for tests
+    try:
+        work = await asyncio.to_thread(segment.work_dir, "rate-")
+    except Exception as exc:
+        log.warning("Rate: no work dir (%s)", config.redact(exc))
+        return None
+    try:
+        try:
+            marked, zoom = await asyncio.to_thread(segment.rating_views, frame_path, bbox,
+                                                   str(work / "frame.jpg"), str(work / "zoom.jpg"))
+            marked_url, zoom_url = await asyncio.to_thread(_data_url, marked), await asyncio.to_thread(_data_url, zoom)
+        except Exception as exc:
+            log.warning("Rate: frame unavailable (%s)", config.redact(exc))
+            return None
+        content = [{"type": "text", "text": rate_prompt(category, description)},
+                   {"type": "image_url", "image_url": {"url": marked_url}},
+                   {"type": "image_url", "image_url": {"url": zoom_url}}]
+        for attempt in range(2):
+            try:
+                raw = await _request(content)
+                return _parse_rating(_extract_json(raw), COSMOS_RATER)
+            except (ValueError, TypeError) as exc:
+                log.warning("Cosmos rate: invalid reply (attempt %d: %s)", attempt + 1, config.redact(exc))
+                content[0] = {"type": "text", "text": rate_prompt(category, description) +
+                              "\nYour previous reply was invalid. Return the complete JSON object only."}
+            except Exception as exc:
+                log.warning("Cosmos rate: trying Nemotron VL (%s)", config.redact(exc))
+                break
+        try:
+            reply = await nemotron.chat_json([{"role": "user", "content": [
+                {"type": "text", "text": rate_prompt(category, description, single=True)},
+                {"type": "image_url", "image_url": {"url": marked_url}}]}],
+                _RateReply, model=nemotron.SUPER_VL, timeout=40.0)
+            return _parse_rating(reply, NEMOTRON_RATER)
+        except Exception as exc:
+            log.warning("Rate: no rating (%s)", config.redact(exc))
+            return None
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

@@ -1,0 +1,138 @@
+{
+ "_about": "Hand labels from a frame-by-frame review of corpus keyframes (2026-10-17), for rate_severity.py --eval. real=false: not a defect.",
+ "8cc3b4a69c2d": {
+  "real": true,
+  "severity": 4,
+  "note": "stop sign defaced with stickers/graffiti"
+ },
+ "b9982da36951": {
+  "real": true,
+  "severity": 4,
+  "note": "knocked-over barrel at a lane closure"
+ },
+ "ddcc5c2de178": {
+  "real": true,
+  "severity": 4,
+  "note": "broken asphalt across the travel lane"
+ },
+ "d748d85b8dd7": {
+  "real": true,
+  "severity": 4,
+  "note": "broken/sunken catch basin at the curb"
+ },
+ "63d993fd7c7c": {
+  "real": true,
+  "severity": 3,
+  "note": "DANGER barricade + officer directing traffic"
+ },
+ "8e4c257ff4d2": {
+  "real": true,
+  "severity": 3,
+  "note": "utility trucks block the left lane"
+ },
+ "a1849cb4705a": {
+  "real": true,
+  "severity": 3,
+  "note": "bucket trucks + cones in the lane"
+ },
+ "39145937c0be": {
+  "real": true,
+  "severity": 3,
+  "note": "barrel lane closure"
+ },
+ "52b07bc73eda": {
+  "real": true,
+  "severity": 3,
+  "note": "pothole with water at the curb"
+ },
+ "740174e69891": {
+  "real": true,
+  "severity": 3,
+  "note": "broken asphalt at the crosswalk"
+ },
+ "15928ad7147d": {
+  "real": true,
+  "severity": 3,
+  "note": "failed patch in the lane"
+ },
+ "344f17983a56": {
+  "real": true,
+  "severity": 3,
+  "note": "failed patch in the lane"
+ },
+ "09aa9ebd5874": {
+  "real": true,
+  "severity": 3,
+  "note": "heavy graffiti on building walls"
+ },
+ "cb5f3e4cb70d": {
+  "real": true,
+  "severity": 2,
+  "note": "heavy graffiti on building walls"
+ },
+ "3dab7f1c5774": {
+  "real": true,
+  "severity": 3,
+  "note": "dumped bag on the boulevard"
+ },
+ "cb602219ac59": {
+  "real": false,
+  "severity": null,
+  "note": "public-art sculpture, not a work zone"
+ },
+ "9236ea34d9ab": {
+  "real": false,
+  "severity": null,
+  "note": "sanctioned mural, not graffiti"
+ },
+ "fae29a1a7d1f": {
+  "real": false,
+  "severity": null,
+  "note": "parked dump truck, not a work zone"
+ },
+ "53c9c67ac22d": {
+  "real": false,
+  "severity": null,
+  "note": "parked dump truck, not a work zone"
+ },
+ "33f457b8155e": {
+  "real": false,
+  "severity": null,
+  "note": "smooth highway"
+ },
+ "7c0aab7d048c": {
+  "real": false,
+  "severity": null,
+  "note": "intact brick paving"
+ },
+ "23516d499bac": {
+  "real": false,
+  "severity": null,
+  "note": "grass"
+ },
+ "a1d3fdff1e34": {
+  "real": false,
+  "severity": null,
+  "note": "intact tram-track concrete"
+ },
+ "ece20543c752": {
+  "real": false,
+  "severity": null,
+  "note": "normal curb"
+ },
+ "01370aea575b": {
+  "real": false,
+  "severity": null,
+  "note": "intact stop sign"
+ },
+ "54cc781476d1": {
+  "real": false,
+  "severity": null,
+  "note": "intact stop sign"
+ },
+ "d52e930da0f2": {
+  "real": false,
+  "severity": null,
+  "note": "store sign, not a dumpster"
+ }
+}

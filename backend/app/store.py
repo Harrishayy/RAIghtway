@@ -10,6 +10,7 @@ import tempfile
 from threading import RLock, Thread
 
 from app import config
+from app.ai.prompts import URGENCY_FOR
 from app.models import IssueRecord, Plan, Report, VideoRecord
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ _plan: Plan | None = None
 _cutoff: datetime | None = None
 _source = "empty"
 _writes: Queue = Queue()
+RATINGS_FILE = "ratings.jsonl"     # append-only log of severity ratings, mirrored to the VastDB `ratings` table
 _worker: Thread | None = None
 
 
@@ -94,6 +96,111 @@ def _index(issues: list[IssueRecord]) -> None:
             log.warning("Vector add failed (%s)", config.redact(exc))
 
 
+# ---- Severity ratings: an overlay on insert-only issue rows ----
+# Issue rows in VastDB keep the find pass's severity. A rating (app/ai/rating.py) is a separate row
+# {issue_id, severity, find_severity, reason, model, verdict, observed, rated_at}; the newest one per issue wins.
+# A row with an empty model clears the rating and restores find_severity, so every re-grade is reversible.
+
+def _rated_at(row: dict) -> datetime | None:
+    try:
+        value = row.get("rated_at")
+        return _utc(value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00")))
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_rating_row(issue: IssueRecord, row: dict) -> bool:
+    """Apply one rating row to an issue in place unless the issue already holds a newer one."""
+    when = _rated_at(row)
+    if when is None or (issue.rated_at is not None and _utc(issue.rated_at) > when):
+        return False
+    original = issue.find_severity or row.get("find_severity") or issue.severity
+    original = max(1, min(5, int(original)))
+    if not row.get("model"):
+        issue.severity, issue.find_severity = original, None
+        issue.severity_reason = issue.severity_model = issue.verdict = None
+    else:
+        issue.find_severity = original
+        issue.severity = max(1, min(5, int(row["severity"])))
+        issue.severity_reason = row.get("reason") or None
+        issue.severity_model = str(row["model"])
+        issue.verdict = row.get("verdict") if row.get("verdict") in ("confirmed", "rejected") else None
+    issue.rated_at = when
+    if issue.work_order is not None:
+        issue.work_order = issue.work_order.model_copy(update={"urgency": URGENCY_FOR(issue.severity)})
+    return True
+
+
+def _latest_ratings(rows: list[dict]) -> dict[str, dict]:
+    latest: dict[str, dict] = {}
+    for row in rows:
+        when, id = _rated_at(row), row.get("issue_id")
+        if when is None or not id:
+            continue
+        if id not in latest or _rated_at(latest[id]) <= when:
+            latest[id] = row
+    return latest
+
+
+def _read_rating_log() -> list[dict]:
+    path = Path(config.STATE_DIR) / RATINGS_FILE
+    rows = []
+    try:
+        for line in path.read_text().splitlines():
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    rows.append(row)
+            except ValueError:
+                continue
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        log.warning("Rating log unreadable (%s)", config.redact(exc))
+    return rows
+
+
+def append_rating_log(rows: list[dict]) -> None:
+    """Append rating rows to state/ratings.jsonl (sync; safe to call from a script with the API running)."""
+    if not rows:
+        return
+    path = Path(config.STATE_DIR) / RATINGS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        for row in rows:
+            f.write(json.dumps(row, default=str) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _load_ratings() -> list[dict]:
+    rows = _read_rating_log()
+    try:
+        rows += importlib.import_module("app.vast.db").load_ratings()
+    except Exception as exc:
+        log.warning("VastDB ratings unavailable (%s); using the local rating log", config.redact(exc))
+    return rows
+
+
+def apply_ratings(rows: list[dict], persist: bool = True) -> int:
+    """Apply rating rows to the live store; persist them to the log, VastDB and the snapshot. Returns how many applied."""
+    applied = 0
+    with _lock:
+        for row in rows:
+            for table in (_issues, _saved_issues):
+                issue = table.get(row.get("issue_id"))
+                if issue is not None and apply_rating_row(issue, row) and table is _issues:
+                    applied += 1
+        if persist and rows:
+            try:
+                append_rating_log(rows)
+            except Exception as exc:
+                log.warning("Rating log write failed (%s)", config.redact(exc))
+            _snapshot()
+            _enqueue("insert_ratings", [dict(r) for r in rows])
+    return applied
+
+
 def load() -> None:
     """Merge VastDB with the local snapshot, retaining locally persisted records."""
     global _report, _plan, _cutoff, _source
@@ -145,7 +252,8 @@ def load() -> None:
             issues = list((snapshot_issues | {i.id: i for i in issues}).values())
             if snapshot_report:
                 reports.append(snapshot_report)
-            _report = max(reports, key=lambda r: _utc(r.generated_at), default=None)
+            # On a tie the snapshot copy wins: VastDB rows keep only the core report columns.
+            _report = max(reports, key=lambda r: (_utc(r.generated_at), r is snapshot_report), default=None)
             _plan = plans[-1] if plans else None
             if _cutoff:
                 if _report and _utc(_report.generated_at) < _cutoff:
@@ -169,6 +277,10 @@ def load() -> None:
                 _source = "empty"
         if _cutoff and _report and _utc(_report.generated_at) < _cutoff:
             _report = None
+        ratings = _latest_ratings(_load_ratings())
+        rated = sum(apply_rating_row(issue, ratings[issue.id]) for issue in issues if issue.id in ratings)
+        if ratings:
+            log.info("Severity ratings: %d rows, %d applied", len(ratings), rated)
         _videos.clear()
         _issues.clear()
         _done_videos.clear()
@@ -270,16 +382,40 @@ def get_issue(id: str) -> IssueRecord | None:
         return issue.model_copy(deep=True) if issue and _visible(issue) else None
 
 
-def canonical_issues(include_uploads_before_reset: bool = False) -> list[IssueRecord]:
+def canonical_issues(include_uploads_before_reset: bool = False, include_rejected: bool = True) -> list[IssueRecord]:
+    """One record per real-world issue. Severity is the worst sighting that was not rejected (with that sighting's
+    reason and rater); verdict is "rejected" only when every rated sighting was. Work-order urgency follows it."""
     with _lock:
         visible = [i for i in _issues.values() if include_uploads_before_reset or _visible(i)]
-        canonical = {i.id: i.model_copy(deep=True, update={"sightings": 1}) for i in visible if not i.duplicate_of}
+        groups: dict[str, list[IssueRecord]] = {i.id: [i] for i in visible if not i.duplicate_of}
         for issue in visible:
-            original = canonical.get(issue.duplicate_of)
-            if original:
-                original.sightings += 1
-                original.severity = max(original.severity, issue.severity)
-        return sorted(canonical.values(), key=lambda i: _utc(i.created_at))
+            if issue.duplicate_of in groups:
+                groups[issue.duplicate_of].append(issue)
+        result = []
+        for id, sightings in groups.items():
+            original = sightings[0].model_copy(deep=True, update={"sightings": len(sightings)})
+            kept = [s for s in sightings if s.verdict != "rejected"]
+            best = max(kept or sightings, key=lambda s: s.severity)    # max keeps the first on ties: the canonical
+            original.severity = best.severity
+            if best is not sightings[0]:
+                original.severity_reason, original.severity_model = best.severity_reason, best.severity_model
+            if not kept:
+                original.verdict = "rejected"
+            elif any(s.verdict == "confirmed" for s in kept):
+                original.verdict = "confirmed"
+            elif original.verdict == "rejected":
+                original.verdict = None              # rejected here, but a sighting not yet rated may show it
+            if original.work_order is not None:
+                original.work_order.urgency = URGENCY_FOR(original.severity)
+            if include_rejected or original.verdict != "rejected":
+                result.append(original)
+        return sorted(result, key=lambda i: _utc(i.created_at))
+
+
+def all_issues() -> list[IssueRecord]:
+    """Every visible sighting, re-sightings included (copies)."""
+    with _lock:
+        return [i.model_copy(deep=True) for i in _issues.values() if _visible(i)]
 
 
 def issues_for_video(video_id: str) -> list[IssueRecord]:

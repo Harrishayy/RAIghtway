@@ -14,6 +14,8 @@ interface UiState {
   widths: { a: number; c: number };
   mapView: 'drive' | 'city';
   rate: number;
+  /** The VSS footage search: the footage list and the timeline lane read the same query. Not restored on reload. */
+  topic: string;
   setDirection: (d: Direction) => void;
   setPreset: (p: CategoryPresetId) => void;
   toggleCategory: (c: CategoryId) => void;
@@ -21,6 +23,7 @@ interface UiState {
   setWidths: (w: Partial<{ a: number; c: number }>) => void;
   setMapView: (v: 'drive' | 'city') => void;
   setRate: (r: number) => void;
+  setTopic: (q: string) => void;
   resetLayout: () => void;
 }
 const noStorage: Storage = { length: 0, clear() {}, getItem: () => null, key: () => null, removeItem() {}, setItem() {} };
@@ -28,7 +31,7 @@ const DEFAULT_ORDER: PaneId[] = ['footage', 'player', 'map'];
 const DEFAULT_WIDTHS = { a: 272, c: 380 };
 
 export const useUi = create<UiState>()(persist((set, get) => ({
-  direction: env.defaultDirection, preset: 'all', hidden: [], order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS, mapView: 'drive', rate: 4,
+  direction: env.defaultDirection, preset: 'all', hidden: [], order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS, mapView: 'drive', rate: 4, topic: '',
   setDirection: direction => set({ direction }),
   setPreset: preset => set({ preset, hidden: [] }),
   toggleCategory: c => {
@@ -40,6 +43,7 @@ export const useUi = create<UiState>()(persist((set, get) => ({
   setWidths: w => set({ widths: { ...get().widths, ...w } }),
   setMapView: mapView => set({ mapView }),
   setRate: rate => set({ rate }),
+  setTopic: topic => set({ topic: topic.trim() }),
   resetLayout: () => set({ order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS }),
 }), {
   name: 'raightway:ui', version: 1, skipHydration: true,
@@ -50,6 +54,7 @@ export const useUi = create<UiState>()(persist((set, get) => ({
     if (!Array.isArray(p.order) || p.order.length !== 3 || !DEFAULT_ORDER.every(k => p.order!.includes(k))) out.order = DEFAULT_ORDER;
     if (!p.preset || !(p.preset in CATEGORY_PRESETS)) out.preset = 'all';
     out.direction = current.direction;   // the look picker is hidden: always the default (survey)
+    out.topic = '';                       // a search is per visit
     if (!p.widths || !Number.isFinite(p.widths.a) || !Number.isFinite(p.widths.c)) out.widths = DEFAULT_WIDTHS;
     return out;
   },
