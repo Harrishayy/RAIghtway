@@ -1,14 +1,19 @@
 'use client';
 // The selected issue: what and where, how often it has been seen (each sighting seeks to it), the
 // work order, and similar past issues. Handles merged, provisional and not-yet-planned states.
-import { CATEGORY, fmtClock, fmtCoord, fmtTimecode, severityDef, type Issue } from '@raightway/core';
+// `frame` adds the finding's frame with its box, for screens that have no player beside the card.
+import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, severityDef, type Issue, type Urgency } from '@raightway/core';
 import { useClient } from '@/domain/client';
 import { useSimilar } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
 import { Chip, CategoryLabel, SevDot, SevLabel } from '@/ui/marks';
 import { Empty } from '@/ui/State';
+import { Frame } from '@/ui/Footage/Frame';
+import { Thumb } from '@/ui/Thumb';
 
-export function IssueCard({ issue, onOpen }: { issue: Issue | null | undefined; onOpen?: (i: Issue) => void }) {
+const URGENCY: Record<Urgency, ['failed' | 'hold' | 'neutral', string]> = { urgent: ['failed', 'Urgent'], soon: ['hold', 'Soon'], routine: ['neutral', 'Routine'] };
+
+export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | undefined; onOpen?: (i: Issue) => void; frame?: boolean }) {
   const client = useClient(); const similar = useSimilar(issue && !issue.provisional ? issue.duplicate_of ?? issue.id : null);
   const { open, seek, videoId, select } = usePlayback();
   if (!issue) return <div className="issue"><Empty title="Nothing selected">Pick a finding on the timeline, the table or the map.</Empty></div>;
@@ -16,6 +21,7 @@ export function IssueCard({ issue, onOpen }: { issue: Issue | null | undefined; 
   const jump = (vid: string, t: number) => (vid === videoId ? seek(t) : open(vid, t, issue.id));
   return (
     <div className="issue">
+      {frame ? <Frame issue={issue} src={client.frameUrl(issue)} seed={issue.frame_seed ?? 0} className="issue-frame" /> : null}
       <div className="issue-tags">
         <CategoryLabel id={issue.category} /><SevLabel level={issue.severity} />
         <Chip tone={issue.severity === 5 ? 'failed' : 'neutral'}>{sv.when}</Chip>
@@ -33,12 +39,12 @@ export function IssueCard({ issue, onOpen }: { issue: Issue | null | undefined; 
       ) : null}
       {wo ? (
         <div><div className="label">Work order</div>
-          <dl className="kv left"><dt>Repair</dt><dd>{wo.repair}</dd><dt>Crew</dt><dd>{CATEGORY[issue.category].crewLabel}, {wo.minutes} min</dd>{wo.equipment.length ? <><dt>Kit</dt><dd>{wo.equipment.join(' · ')}</dd></> : null}</dl>
+          <dl className="kv left"><dt>Repair</dt><dd>{wo.repair}</dd><dt>Crew</dt><dd>{CATEGORY[CATEGORY_FOR_CREW[wo.crew] ?? issue.category].crewLabel}, {wo.minutes} min</dd><dt>Urgency</dt><dd><Chip tone={URGENCY[wo.urgency][0]} plain>{URGENCY[wo.urgency][1]}</Chip></dd>{wo.equipment.length ? <><dt>Kit</dt><dd>{wo.equipment.join(' · ')}</dd></> : null}</dl>
         </div>
       ) : !issue.duplicate_of ? <p className="note">{issue.provisional ? 'Work order follows once history is checked.' : 'No work order yet.'}</p> : null}
       {client.capabilities.similar && similar.data?.length ? (
         <div><div className="label">Similar issues</div>
-          <ul className="similar">{similar.data.map(s => <li key={s.issue.id}><button type="button" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><SevDot level={s.issue.severity} /><span className="two"><span>{s.issue.description}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}</span></span><span className="mono muted" title="Embedding distance">{s.distance.toFixed(2)}</span></button></li>)}</ul>
+          <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{s.issue.description}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button></li>)}</ul>
         </div>
       ) : null}
     </div>

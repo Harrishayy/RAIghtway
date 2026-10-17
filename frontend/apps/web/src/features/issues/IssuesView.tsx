@@ -48,7 +48,7 @@ export function IssuesView() {
       </section>
       <aside className="card split-side" aria-label="Selected issue">
         <MapView label="Map of open issues" issues={list} selectedId={sel?.id} onSelect={i => select(i.id)} focus={sel && sel.lat != null ? [[sel.lat, sel.lon!]] : undefined} minSpan={1800} className="map-tall" />
-        <IssueCard issue={sel} />
+        <IssueCard issue={sel} frame />
         {sel ? <div className="pad-s actions"><button type="button" className="btn btn-secondary btn-sm" onClick={() => watch(sel)}>Watch in Review</button>{sel.severity === 5 ? <Chip tone="failed">{CATEGORY[sel.category].crewLabel} today</Chip> : null}</div> : null}
       </aside>
     </div>

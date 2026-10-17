@@ -38,7 +38,7 @@ function VideoRow({ v, issues, current, t, onOpen }: { v: Video; issues: Issue[]
   return (
     <button type="button" className={`vrow${live ? ' live' : ''}`} aria-current={current} onClick={onOpen}>
       <span className="vrow-top"><span className="vrow-id">{v.drive ?? v.filename}</span>{live || v.status === 'failed' ? <StatusChip status={v.status} /> : hz ? <Chip tone="failed">{hz} hazard{hz > 1 ? 's' : ''}</Chip> : <StatusChip status={v.status} />}</span>
-      <span className="vrow-where">{live ? (v.stage_detail ?? 'Waiting to start') : where}</span>
+      <span className={`vrow-where${v.status === 'failed' ? ' bad' : ''}`} title={v.status === 'failed' ? v.stage_detail : undefined}>{live ? (v.stage_detail ?? 'Waiting to start') : v.status === 'failed' ? (v.stage_detail ?? 'Analysis failed') : where}</span>
       {live ? <StageTrack stage={v.stage} status={v.status} /> : (
         <span className="strip" aria-hidden="true">
           {v.duration_s > 0 && issues.map(i => <i key={i.id} data-sev={i.severity} style={{ left: `${(i.t / v.duration_s) * 100}%` }} />)}

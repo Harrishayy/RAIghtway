@@ -90,7 +90,8 @@ export const parse = {
   similar: (raw: unknown): Similar[] => (Array.isArray(raw) ? raw : []).flatMap((x: unknown) => {
     const o = x as Record<string, unknown>;
     const r = IssueSchema.safeParse(o && 'issue' in o ? o.issue : o);
-    return r.success ? [{ issue: r.data as Issue, distance: Number(o?.distance ?? o?.score ?? 0) }] : [];
+    const d = Number(o?.distance ?? o?.score ?? NaN);
+    return r.success ? [{ issue: r.data as Issue, distance: Number.isFinite(d) ? d : null }] : [];
   }),
   topicHits: (raw: unknown): TopicHit[] => {
     const o = raw as Record<string, unknown> | unknown[];

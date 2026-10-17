@@ -129,6 +129,9 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 .map-alert .sev-dot{width:18px;height:18px;font-size:10px}
 .maplibregl-ctrl-attrib{font-size:10px!important;background:color-mix(in oklab,var(--surface) 80%,transparent)!important;color:var(--ink-2)}
 .maplibregl-ctrl-attrib a{color:inherit}
+/* keep the attribution clear of the Key button (bottom-left), wrapping instead of running under it */
+.mapbox .maplibregl-ctrl-bottom-right{max-width:calc(100% - 96px)}
+.mapbox .maplibregl-ctrl-attrib-inner{overflow-wrap:anywhere}
 /* schematic engine: same alert language */
 .m-pin .m-glyph{fill:none;stroke:var(--on);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke;pointer-events:none}
 .m-pin circle:not(.m-hz){fill:var(--sv);stroke:var(--surface);stroke-width:1.5;vector-effect:non-scaling-stroke}
@@ -200,6 +203,12 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 .similar .two{display:grid;min-width:0}.similar .two>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .similar button:hover{background:var(--surface-2)}
 .similar .sim-r{display:flex;align-items:center;gap:6px}
+.thumb{position:relative;display:grid;place-items:center;width:56px;aspect-ratio:16/9;border-radius:var(--r);overflow:hidden;background:var(--surface-2);border:1px solid var(--line);flex:none}
+.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.thumb .ic{width:16px;height:16px;color:var(--cc)}
+.issue-frame{border-radius:var(--r)}
+.vrow-where.bad{color:var(--bad);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@container (max-width:300px){.thumb{display:none}.similar button{grid-template-columns:minmax(0,1fr) auto}}
 
 /* ---------- issues & dispatch: list + side ---------- */
 .split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:14px;padding:14px}

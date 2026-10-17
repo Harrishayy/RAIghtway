@@ -16,6 +16,9 @@ export const DEFAULT_ENDPOINTS: Endpoints = {
   upload: '/api/videos', search: '/api/search', videoFile: null,
 };
 
+/** Where the backend's dispatch starts and ends every route (backend/app/planning: DEPOT). */
+export const DEFAULT_DEPOT: Depot = { lat: 43.6534, lon: -79.3841, label: 'Toronto City Hall (assumed depot)' };
+
 type Raw = unknown;
 export interface HttpClientConfig {
   /** Prepended to every endpoint. '' keeps requests same-origin (Next rewrites /api to the backend). */
@@ -24,6 +27,8 @@ export interface HttpClientConfig {
   headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   credentials?: RequestCredentials;
   timeoutMs?: number;
+  /** Timeout for calls that wait on a model or solver (POST /api/report, POST /api/dispatch). Default 120 s. */
+  slowTimeoutMs?: number;
   capabilities?: Partial<Capabilities>;
   depot?: Depot;
   /** Map a backend's free-text stage ("checking 3/6") onto a pipeline stage id. */
@@ -52,19 +57,22 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
   const base = (config.baseUrl ?? '').replace(/\/$/, '');
   const f = config.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const timeout = config.timeoutMs ?? 15000;
+  // Nemotron (report) and cuOpt (dispatch) answer in seconds to tens of seconds; the default would cut them off.
+  const slowTimeout = Math.max(timeout, config.slowTimeoutMs ?? 120_000);
   const stage = config.stage ?? defaultStage;
   const tx = config.transform ?? {};
   const url = (tpl: string, id?: string) => base + tpl.replace('{id}', encodeURIComponent(id ?? ''));
   const headers = async () => (typeof config.headers === 'function' ? await config.headers() : config.headers ?? {});
 
-  async function request(method: string, path: string, opts: { body?: BodyInit; json?: unknown; signal?: AbortSignal; allow404?: boolean } = {}): Promise<Raw> {
-    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(new DOMException('Timed out', 'TimeoutError')), timeout);
+  async function request(method: string, path: string, opts: { body?: BodyInit; json?: unknown; signal?: AbortSignal; allow404?: boolean; timeoutMs?: number } = {}): Promise<Raw> {
+    const limit = opts.timeoutMs ?? timeout;
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(new DOMException('Timed out', 'TimeoutError')), limit);
     opts.signal?.addEventListener('abort', () => ctrl.abort(opts.signal?.reason), { once: true });
     const h: Record<string, string> = { Accept: 'application/json', ...(await headers()) };
     let body = opts.body; if (opts.json !== undefined) { body = JSON.stringify(opts.json); h['Content-Type'] = 'application/json'; }
     let res: Response;
     try { res = await f(path, { method, headers: h, body, signal: ctrl.signal, credentials: config.credentials }); }
-    catch (e) { throw new ApiError(e instanceof Error && e.name === 'TimeoutError' ? `Timed out after ${timeout / 1000} s` : 'Network error: the backend is unreachable', 0, path); }
+    catch (e) { throw new ApiError(e instanceof Error && e.name === 'TimeoutError' ? `Timed out after ${limit / 1000} s` : 'Network error: the backend is unreachable', 0, path); }
     finally { clearTimeout(timer); }
     if (res.status === 404 && opts.allow404) return null;
     const text = await res.text(); let data: unknown = null;
@@ -91,8 +99,8 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     async listIssues(signal) { return parse.issues((tx.issues ?? (x => x))(await request('GET', url(ep.issues), { signal }))); },
     async similar(id, signal) { return parse.similar((tx.similar ?? (x => x))(await request('GET', url(ep.similar, id), { signal, allow404: true }))); },
     async getReport(signal) { const raw = await request('GET', url(ep.report), { signal, allow404: true }); return raw == null ? null : parse.report((tx.report ?? (x => x))(raw)); },
-    async regenerateReport() { return parse.report((tx.report ?? (x => x))(await request('POST', url(ep.regenerateReport)))); },
-    async dispatch(crews: CrewCounts) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews } }))); },
+    async regenerateReport() { return parse.report((tx.report ?? (x => x))(await request('POST', url(ep.regenerateReport), { timeoutMs: slowTimeout }))); },
+    async dispatch(crews: CrewCounts) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews }, timeoutMs: slowTimeout }))); },
     upload(file: File, opts: UploadOptions = {}) {
       // XHR for upload progress; fetch has no upload progress events.
       return new Promise(async (resolve, reject) => {
@@ -118,6 +126,6 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     },
     frameUrl: (issue: Issue) => (caps.frames ? (issue.frame_url ? (/^https?:/.test(issue.frame_url) ? issue.frame_url : base + issue.frame_url) : url(ep.frame, issue.id)) : null),
     videoUrl: (video: Video) => video.video_url ?? null,
-    depot: () => config.depot ?? { lat: 43.6505, lon: -79.3617, label: 'Depot' },
+    depot: () => config.depot ?? DEFAULT_DEPOT,
   };
 }

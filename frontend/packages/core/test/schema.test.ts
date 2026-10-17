@@ -24,5 +24,6 @@ describe('parse', () => {
     const i = { id: 'a', video_id: 'v', t: 1, category: 'waste', severity: 2, confidence: 1, description: '', frame_url: '', bbox: null, lat: 1, lon: 2 };
     expect(parse.similar([i])[0]!.issue.id).toBe('a');
     expect(parse.similar([{ issue: i, distance: 0.2 }])[0]!.distance).toBe(0.2);
+    expect(parse.similar([i])[0]!.distance).toBeNull(); // the FastAPI backend sends plain Issue[]
   });
 });

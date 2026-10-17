@@ -8,6 +8,8 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   transpilePackages: ['@raightway/core'],
+  // The /api rewrite proxy gives up after 30 s by default; report (Nemotron) and dispatch (cuOpt) can take longer.
+  experimental: { proxyTimeout: 120_000 },
   async rewrites() {
     return api ? [{ source: '/api/:path*', destination: `${api}/api/:path*` }] : [];
   },

@@ -123,4 +123,5 @@ export interface Topic { id: string; query: string; hits: TopicHit[]; pending?: 
 
 export interface Depot { lat: number; lon: number; label: string }
 export type CrewCounts = Partial<Record<CrewType, number>>;
-export interface Similar { issue: Issue; distance: number }
+/** `distance` is null when the backend returns plain issues (the FastAPI backend does). */
+export interface Similar { issue: Issue; distance: number | null }
