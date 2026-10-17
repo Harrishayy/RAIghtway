@@ -6,3 +6,5 @@ backend/state/
 node_modules/
 frontend/dist/
 .env
+data/pie/
+data/clips/
