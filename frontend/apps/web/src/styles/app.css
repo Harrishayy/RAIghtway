@@ -85,8 +85,10 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 .m-ground{fill:var(--map-ground)}
 .m-st{fill:none;stroke:var(--map-street);stroke-width:2.5;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .m-grid path{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke;fill:none}
-.m-route{fill:none;stroke:var(--cc);stroke-width:3.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.9}
-.m-route.dim{opacity:.12}
+.m-route{fill:none;stroke:var(--cc);stroke-width:3.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:1}
+.m-route.dim{opacity:.18}
+.m-arrow{fill:none;stroke:var(--surface);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke;paint-order:stroke;filter:drop-shadow(0 0 .6px var(--ink)) drop-shadow(0 0 .6px var(--ink));pointer-events:none}
+.m-arrow.dim{opacity:.2}
 .m-depot rect{fill:var(--ink);stroke:var(--map-ground);stroke-width:2;vector-effect:non-scaling-stroke}
 /* operating sites: a square badge in the kind's colour with a glyph, so a site never reads as an issue pin */
 .m-site{cursor:default}.m-site[role="button"]{cursor:pointer}
@@ -202,7 +204,6 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 .track-live{position:absolute;left:11px;top:-6px;width:4px;height:16px;border-radius:2px;background:var(--cc);animation:trackgo 1s ease-in-out infinite alternate}
 .track-stop.on .track-live{top:9px;height:10px}
 @keyframes trackgo{from{transform:translateY(-4px);opacity:.5}to{transform:translateY(4px);opacity:1}}
-.panel-issue{border-top:var(--bw) solid var(--line)}
 @media (max-width:860px){.dispatch{display:flex;flex-direction:column;--panel:100%}.dispatch .map-fill{position:relative;height:56dvh;right:0}.dispatch-panel{position:relative;inset:auto;width:auto;margin:10px;max-height:none}.panel-toggle{display:none}.shift{position:relative;left:auto;right:auto;bottom:auto;margin:10px 10px 0}}
 
 /* ---------- issue card ---------- */
@@ -686,3 +687,28 @@ button.band:hover,button.band:focus-visible{opacity:1!important;outline:2px soli
 .routes-colour{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:6px 0 8px}
 .routes-legend{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:var(--ink-2);min-width:0}
 .routes-legend span{white-space:nowrap}
+
+/* dispatch: routes as a table; a row opens the truck's shift in a movable panel over the map */
+.route-tbl{table-layout:fixed}
+.route-tbl th,.route-tbl td{padding-left:6px;padding-right:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.route-tbl th:nth-child(2){width:44px}.route-tbl th:nth-child(3){width:48px}.route-tbl th:nth-child(4){width:66px}.route-tbl th:nth-child(5){width:52px}
+.route-tbl .r{text-align:right}
+.rt-truck{display:flex;gap:6px;align-items:center;min-width:0}
+.rt-truck .route-id{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.route-tbl .route-alerts{grid-column:auto;flex:none}
+.rd-h .route-id{white-space:nowrap;flex:none}
+.rd-h .cat-label,.rd-h>span:nth-of-type(2){min-width:0;overflow:hidden;white-space:nowrap}
+.route-tbl tr[aria-selected="true"] td{background:color-mix(in oklab,var(--cc) 14%,transparent)}
+.route-tbl tr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.route-detail{position:absolute;z-index:6;width:min(360px,calc(100% - 28px));max-height:min(60vh,calc(100% - var(--y) - 76px));min-height:0;display:flex;flex-direction:column;overflow:hidden;border-top:3px solid var(--cc);box-shadow:var(--shadow);container-type:inline-size}
+.route-detail.wide{width:min(560px,calc(100% - 28px));max-height:calc(100% - var(--y) - 76px)}
+.route-detail.folded{max-height:none}
+.rd-h{display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:grab;user-select:none;touch-action:none;border-bottom:var(--bw) solid var(--line);min-width:0}
+.route-detail.folded .rd-h{border-bottom:0}
+.rd-h:active{cursor:grabbing}
+.rd-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-act{margin-left:auto;display:flex;gap:2px;flex:none}
+.rd-b{overflow:auto;min-height:0;display:grid;gap:6px;padding-top:8px}
+.rd-sum{margin:0;padding:0 12px}
+.rd-b .route-bar{margin:0 12px}
+@container (max-width:300px){.route-detail .rd-meta{display:none}}

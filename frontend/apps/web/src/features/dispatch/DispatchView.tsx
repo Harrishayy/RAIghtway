@@ -22,20 +22,21 @@ import { Empty, Failed, Loading } from '@/ui/State';
 import { PlanPanel, type PlanSettings } from './PlanPanel';
 import { RecommendCard } from './RecommendCard';
 import { RoadsPanel, basesOf } from './RoadsPanel';
+import { RouteDetail } from './RouteDetail';
 import { RouteList } from './RouteList';
 import { TriagePanel } from './TriagePanel';
 import { ZonePicker, type DrawState } from './ZonePicker';
 import { nameOf, timeline, totalsOf, truckAt } from './schedule';
 
 export interface RouteRow { r: Route & { category: CategoryId }; tl: ScheduleEntry[]; totals: ShiftTotals; tone: number }
-type Tab = 'plan' | 'triage' | 'routes' | 'roads';
+type Tab = 'plan' | 'triage' | 'routes' | 'roads' | 'issue';
 
 export function DispatchView() {
   const client = useClient(); const issues = useIssues(); const cats = useCategories();
   const solve = useDispatch(); const latest = useLatestPlan(); const sitesQ = useFacilities(); const updateSite = useUpdateFacility();
   const recommend = useRecommend(); const latestRec = useLatestRecommendation();
   const { selectedIssue, select } = usePlayback();
-  const [panel, setPanel] = useState(true); const [tab, setTab] = useState<Tab>('plan'); const [crew, setCrew] = useState<string | null>(null);
+  const [panel, setPanel] = useState(true); const [tabPick, setTab] = useState<Tab | null>(null); const [crew, setCrew] = useState<string | null>(null);
   // routes on the map and the cards: coloured by the kind of work (category), or one colour per truck
   const [colourBy, setColourBy] = useState<'type' | 'truck'>('type'); const forget = useClearPlan();
   const [settings, setSettings] = useState<PlanSettings>({ floor: 3, days: 1, triage: true }); const [dayPick, setDay] = useState(1);
@@ -65,6 +66,16 @@ export function DispatchView() {
   const rec = recommend.data ?? latestRec.data ?? null;
   const horizon = plan?.days?.length ? Math.max(...plan.days.map(d => d.day)) : 1;
   const day = dayPick > horizon ? 1 : dayPick;
+  // a plan in place locks planning: settings, zones and Plan routes come back only after New plan
+  const [editing, setEditing] = useState(false); const planning = !plan || editing;
+  // until a tab is picked, open on the routes when a plan is already in place (e.g. after a reload)
+  const fallbackTab: Tab = plan ? 'routes' : 'plan';
+  const tab: Tab = tabPick === 'issue' && !(selectedIssue && byId.has(selectedIssue)) ? fallbackTab : tabPick ?? fallbackTab;
+  // picking an issue (on the map, a route stop, triage or not reached) opens it in its own tab; on Roads it
+  // stays put, since there the pick is the directions target
+  const pick = (id: string) => { select(id); if (tab !== 'roads') setTab('issue'); };
+  const startNew = () => { setEditing(true); setTab('plan'); setCrew(null); setPlaying(false); };
+  const cancelNew = () => { setEditing(false); setDraw(null); setTab('routes'); };
 
   // a colour per truck, the same on every day of the plan
   const tones = useMemo(() => { const ids = [...new Set((plan?.routes ?? []).filter(r => r.stops.length).map(r => r.vehicle_id ?? r.crew_id))].sort(); return new Map(ids.map((id, k) => [id, k])); }, [plan]);
@@ -79,7 +90,7 @@ export function DispatchView() {
       ...(focusIds.length ? { zones: focusIds } : {}), ...(inline ? { polygon: inline } : {}),
       ...(extra.scenario && rec ? { scenario: { recommendation_id: rec.id, scenario_id: extra.scenario.id } } : {}) } : undefined;
     const crews = Object.fromEntries(crewTypes.map(t => [t, sum.baselineCrews[t] ?? 1]));
-    solve.mutate({ crews, opts }, { onSuccess: () => { setTab('routes'); setDay(1); setClock(0); setPlaying(false); } });
+    solve.mutate({ crews, opts }, { onSuccess: () => { setEditing(false); setTab('routes'); setDay(1); setClock(0); setPlaying(false); } });
   };
   const setTrucks = (f: Facility, crewType: CrewType, n: number) => updateSite.mutate({ id: f.id, patch: { vehicles: { ...(f.vehicles ?? {}), [crewType]: Math.max(0, Math.min(20, n)) } } });
   const apply = (s: Scenario) => {
@@ -108,10 +119,12 @@ export function DispatchView() {
     raf.current = requestAnimationFrame(step); return () => cancelAnimationFrame(raf.current);
   }, [playing, speed]);
 
-  const routes: MapRoute[] = rows.map(({ r, tl, tone }) => ({
-    id: r.crew_id, category: r.category, path: r.path, dim: Boolean(crew && crew !== r.crew_id), tone: colourBy === 'truck' ? tone - 1 : undefined,
-    // numbered stops + ETAs for the truck in focus (or every truck when only a few are out), so the overview stays readable
-    stops: crew === r.crew_id || (!crew && rows.length <= 3) ? tl.filter(e => e.kind === 'job').map((e, k) => ({ at: [e.lat, e.lon] as LatLon, n: k + 1, eta: fmtShift(e.arrive_min), done: clock >= e.depart_min })) : undefined,
+  // numbered stops + ETAs for the truck in focus (or every truck when only a few are out), so the overview stays readable
+  const stopsShown = (id: string) => crew === id || (!crew && rows.length <= 3);
+  // a truck in focus is drawn alone, so other routes' colours don't cross it
+  const routes: MapRoute[] = rows.filter(a => !crew || a.r.crew_id === crew).map(({ r, tl, tone }) => ({
+    id: r.crew_id, category: r.category, path: r.path, dim: editing, tone: colourBy === 'truck' ? tone - 1 : undefined,
+    stops: stopsShown(r.crew_id) ? tl.filter(e => e.kind === 'job').map((e, k) => ({ at: [e.lat, e.lon] as LatLon, n: k + 1, eta: fmtShift(e.arrive_min), done: clock >= e.depart_min })) : undefined,
     at: truckAt(tl, clock),
   }));
   if (planned && tab === 'roads') routes.push({ id: 'directions', category: planned.category, path: planned.path });
@@ -119,32 +132,40 @@ export function DispatchView() {
     : draw?.points.length ? undefined : focusZones.length && !rows.length ? focusZones.flatMap(z => z.polygons.flat()) : undefined;
   const routed = useMemo(() => new Set((plan?.routes ?? []).flatMap(r => r.stops)), [plan]);
   const routedToday = useMemo(() => new Set(rows.flatMap(a => a.r.stops)), [rows]);
-  // once routed, a job is drawn as its truck's numbered stop; pins remain for what is still unrouted
-  const mapIssues = useMemo(() => (issues.data ?? []).filter(i => !i.duplicate_of && cats.includes(i.category) && !(plan && routedToday.has(i.id) && i.id !== selectedIssue)), [issues.data, cats, plan, routedToday, selectedIssue]);
+  // while planning: every open pin, a routed job drawn as its truck's numbered stop instead. With a plan locked in,
+  // only the day's route jobs (or the focused truck's) stay on the map; the rest of the backlog leaves it.
+  const focusJobs = useMemo(() => (crew ? new Set(rows.find(a => a.r.crew_id === crew)?.r.stops ?? []) : routedToday), [crew, rows, routedToday]);
+  const drawnStops = useMemo(() => new Set(rows.filter(a => stopsShown(a.r.crew_id)).flatMap(a => a.r.stops)), [rows, crew]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mapIssues = useMemo(() => (issues.data ?? []).filter(i => !i.duplicate_of && cats.includes(i.category) && (i.id === selectedIssue
+    || (planning ? !(plan && routedToday.has(i.id)) : focusJobs.has(i.id) && !drawnStops.has(i.id)))), [issues.data, cats, plan, planning, routedToday, focusJobs, drawnStops, selectedIssue]);
   const usedSites = useMemo(() => new Set(rows.map(a => a.r.facility_id)), [rows]);
   const mapSites: MapSite[] = useMemo(() => {
     const shown = sites.length ? sites.filter(f => Object.values(f.vehicles ?? {}).some(n => n) || usedSites.has(f.id)) : plan?.facilities ?? [];
     return shown.map(f => ({ id: f.id, lat: f.lat, lon: f.lon, label: f.label, kind: f.kind, assumed: f.assumed, dim: Boolean(plan && rows.length && !usedSites.has(f.id)) }));
   }, [sites, plan, rows.length, usedSites]);
   const pinnedDeferred = useMemo(() => (plan?.triage?.decisions ?? []).filter(d => d.pinned && d.decision === 'defer'), [plan]);
-  // zones on the map: while planning (with job counts) or whenever a focus is set; outside the focus is dimmed
-  const showZones = zonesOn && (tab === 'plan' || focusIds.length > 0 || Boolean(inline) || Boolean(draw));
+  // zones on the map only while planning (with job counts) or while a focus is set for the next plan; outside the
+  // focus is dimmed. With a plan locked in they leave the map so its routes read clearly.
+  const zonePick = planning && tab === 'plan';
+  const showZones = zonesOn && planning && (zonePick || focusIds.length > 0 || Boolean(inline) || Boolean(draw));
   const mapZones: MapZone[] = useMemo(() => !showZones ? [] : [
-    ...zones.filter(z => tab === 'plan' || focusIds.includes(z.id)).map(z => ({ id: z.id, label: z.label, short: z.kind === 'ward' ? `W${z.code ?? ''}` : z.label, kind: z.kind, polygons: z.polygons, selected: focusIds.includes(z.id), count: zoneN.get(z.id)?.n, worst: zoneN.get(z.id)?.worst })),
+    ...zones.filter(z => zonePick || focusIds.includes(z.id)).map(z => ({ id: z.id, label: z.label, short: z.kind === 'ward' ? `W${z.code ?? ''}` : z.label, kind: z.kind, polygons: z.polygons, selected: focusIds.includes(z.id), count: zoneN.get(z.id)?.n, worst: zoneN.get(z.id)?.worst })),
     ...(inline ? [{ id: 'drawn', label: 'Drawn area', kind: 'custom' as const, polygons: [inline], selected: true }] : []),
     ...(draw?.closed ? [{ id: '__draft', label: 'New area', kind: 'custom' as const, polygons: [draw.points], selected: true }] : []),
-  ], [showZones, zones, tab, focusIds, zoneN, inline, draw]);
+  ], [showZones, zones, zonePick, focusIds, zoneN, inline, draw]);
   const drawing: MapDrawing | null = draw && !draw.closed ? { points: draw.points, onPoints: points => setDraw({ points, closed: false }), onClose: () => setDraw(d => (d && d.points.length >= 3 ? { ...d, closed: true } : d)), onCancel: () => setDraw(null) } : null;
   const solverLabel = plan ? (plan.solver === 'cuopt' ? 'cuOpt' : 'Fallback routing') : '';
 
   if (!client.capabilities.dispatch) return <div className="page-pad"><Empty title="Dispatch is off for this backend">Set capabilities.dispatch to enable it.</Empty></div>;
   return (
     <div className={`dispatch${panel ? '' : ' no-panel'}`}>
-      <MapView label="Crew routes, sites and open issues" issues={mapIssues} emphasise={i => !plan || !routed.has(i.id) || i.id === selectedIssue} selectedId={selectedIssue} onSelect={i => select(i.id)}
+      <MapView label="Crew routes, sites and open issues" issues={mapIssues} emphasise={i => !plan || !routed.has(i.id) || i.id === selectedIssue} selectedId={selectedIssue} onSelect={i => pick(i.id)}
         routes={routes} depot={mapSites.length ? null : depot} sites={mapSites} roadAlerts={roadAlerts}
-        zones={mapZones} onZoneSelect={tab === 'plan' ? id => { if (id !== 'drawn' && id !== '__draft') toggleZone(id); } : undefined} drawing={drawing}
+        zones={mapZones} onZoneSelect={zonePick ? id => { if (id !== 'drawn' && id !== '__draft') toggleZone(id); } : undefined} drawing={drawing}
         focus={focusRoute} minSpan={900} className="map-fill"
         overlay={plan ? <span className="mapchip num">{horizon > 1 ? `Day ${day} · ` : ''}{fmtShift(clock)} · {rows.length} trucks out</span> : null} />
+
+      {(() => { const row = crew ? rows.find(a => a.r.crew_id === crew) : undefined; return row ? <RouteDetail key={row.r.crew_id} row={row} byTruck={colourBy === 'truck'} clock={clock} selectedIssue={selectedIssue} onSelect={pick} byId={byId} onCopy={t => void copyBrief(t)} onClose={() => setCrew(null)} /> : null; })()}
 
       {plan && (
         <div className="shift" role="group" aria-label="Shift playback">
@@ -160,14 +181,21 @@ export function DispatchView() {
 
       <aside id="dispatch-panel" className="dispatch-panel card" aria-label="Plan and routes" hidden={!panel}>
         <div className="toolbar">
-          <Seg size="sm" label="Panel" value={tab} onChange={setTab} options={[{ value: 'plan', label: 'Plan' }, { value: 'triage', label: 'Triage' }, { value: 'routes', label: plan ? `Routes · ${rows.length}` : 'Routes' }, ...(roadsOn ? [{ value: 'roads' as const, label: 'Roads' }] : [])]} />
-          <button type="button" className="btn btn-primary btn-sm push" onClick={() => go()} disabled={solve.isPending || (sitesOn ? !total : !crewTypes.length)}><Icon name="route" />{solve.isPending ? 'Routing…' : plan ? 'Re-plan' : 'Plan routes'}</button>
-          {plan && !solve.isPending ? <button type="button" className="btn btn-secondary btn-sm" onClick={() => { if (window.confirm('Clear this plan? Routes and schedules leave the map; Re-plan makes a new one.')) { solve.reset(); forget(); setPlaying(false); setClock(0); setCrew(null); setTab('plan'); } }}><Icon name="x" />Clear plan</button> : null}
+          <Seg size="sm" label="Panel" value={tab} onChange={setTab} options={[{ value: 'plan', label: 'Plan' }, { value: 'triage', label: 'Triage' }, { value: 'routes', label: plan ? `Routes · ${rows.length}` : 'Routes' }, ...(roadsOn ? [{ value: 'roads' as const, label: 'Roads' }] : []), ...(selectedIssue && byId.has(selectedIssue) ? [{ value: 'issue' as const, label: 'Issue' }] : [])]} />
+          {planning
+            ? <button type="button" className="btn btn-primary btn-sm push" onClick={() => go()} disabled={solve.isPending || (sitesOn ? !total : !crewTypes.length)}><Icon name="route" />{solve.isPending ? 'Routing…' : 'Plan routes'}</button>
+            : <button type="button" className="btn btn-primary btn-sm push" onClick={startNew}><Icon name="route" />New plan</button>}
+          {editing && plan && !solve.isPending ? <button type="button" className="btn btn-secondary btn-sm" onClick={cancelNew}>Keep current plan</button> : null}
+          {plan && !editing && !solve.isPending ? <button type="button" className="btn btn-secondary btn-sm" onClick={() => toast({ tone: 'info', title: 'Clear this plan?', body: 'Routes and schedules leave the map; New plan makes another.', action: { label: 'Clear plan', run: () => { solve.reset(); forget(); setEditing(false); setPlaying(false); setClock(0); setCrew(null); setTab('plan'); } } })}><Icon name="x" />Clear plan</button> : null}
         </div>
         <div className="scroll">
-          {issues.isPending ? <Loading rows={6} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : tab === 'roads' ? (
+          {issues.isPending ? <Loading rows={6} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : tab === 'issue' ? (
+            <IssueCard issue={byId.get(selectedIssue!)} />
+          ) : tab === 'roads' ? (
             liveHazards.isError && !plan ? <Failed compact error={liveHazards.error} onRetry={() => void liveHazards.refetch()} />
               : <RoadsPanel bases={bases} hazards={hazards} issue={selectedIssue ? byId.get(selectedIssue) : undefined} onPath={setPlanned} onFocus={setAlertFocus} />
+          ) : tab === 'plan' && !planning ? (
+            <Empty title="This plan is locked in">Routes stay as planned. Press New plan to change what to go for, the trucks or the focus areas.</Empty>
           ) : tab === 'plan' ? (<>
             {client.capabilities.recommend ? <div className="pad-s"><RecommendCard rec={rec} running={recommend.isPending} planning={solve.isPending} onRun={runRecommend} onApply={apply} onApplyPlan={s => { apply(s); go({ scenario: s, floor: s.min_severity }); }} /></div> : null}
             {zonesOn ? <div className="pad-s zone-pad"><ZonePicker zones={zones} counts={zoneN} selected={focusIds} onToggle={toggleZone} onClear={() => setFocusIds([])}
@@ -180,7 +208,7 @@ export function DispatchView() {
               <PlanPanel settings={settings} onSettings={setSettings} open={open} sites={sites} trucks={trucks} onTrucks={setTrucks} crewTypes={crewTypes} />
             )}
           </>) : tab === 'triage' ? (
-            <TriagePanel triage={plan?.triage} byId={byId} onSelect={select} routed={routed} />
+            <TriagePanel triage={plan?.triage} byId={byId} onSelect={pick} routed={routed} />
           ) : solve.isPending ? <div className="solving pad-s"><Dash state="route" size={44} /><span>{settings.triage ? 'Nemotron triaging, then ' : ''}cuOpt routing {total} trucks over {settings.days} day{settings.days > 1 ? 's' : ''}…</span></div>
             : solve.isError ? <Failed compact error={solve.error} onRetry={() => go()} />
             : !plan ? <Empty title="No plan yet">Set what to go for and the trucks per site, then Plan routes.</Empty> : (
@@ -194,13 +222,12 @@ export function DispatchView() {
                 {!rows.length ? <Empty title="No trucks out this day">Nothing left to do, or no trucks for these jobs.</Empty> : null}
                 <div className="row routes-colour"><Seg size="sm" label="Colour routes by" value={colourBy} onChange={setColourBy} options={[{ value: 'type', label: 'By type' }, { value: 'truck', label: 'By truck' }]} />
                   {colourBy === 'type' ? <span className="routes-legend">{[...new Set(rows.map(a => a.r.category))].map(c => <span key={c} data-cat={c}><i className="route-swatch" aria-hidden="true" />{CATEGORIES.find(x => x.id === c)?.label ?? c} · {rows.filter(a => a.r.category === c).length}</span>)}</span> : null}</div>
-                <RouteList byTruck={colourBy === 'truck'} rows={rows} clock={clock} open={crew} onOpen={setCrew} selectedIssue={selectedIssue} onSelect={select} byId={byId} onCopy={t => void copyBrief(t)} />
+                <RouteList byTruck={colourBy === 'truck'} rows={rows} clock={clock} open={crew} onOpen={setCrew} />
                 {plan.unassigned.length ? (<><div className="comp-h mt"><h3>Not reached</h3><Chip tone="hold">{plan.unassigned.length}</Chip></div>
-                  <ul className="unassigned">{plan.unassigned.slice(0, 30).map(id => { const i = byId.get(id); return <li key={id}><button type="button" onClick={() => select(id)}>{i ? <CategoryLabel id={i.category} compact /> : null}<span>{nameOf(i) ?? id}</span><span className="muted">{plan.unassigned_reasons?.[id] ?? 'Shift full'}</span></button></li>; })}</ul></>) : null}
+                  <ul className="unassigned">{plan.unassigned.slice(0, 30).map(id => { const i = byId.get(id); return <li key={id}><button type="button" onClick={() => pick(id)}>{i ? <CategoryLabel id={i.category} compact /> : null}<span>{nameOf(i) ?? id}</span><span className="muted">{plan.unassigned_reasons?.[id] ?? 'Shift full'}</span></button></li>; })}</ul></>) : null}
                 {plan.deferred?.length ? <p className="small muted mt">{plan.deferred.length} jobs wait (below the floor or beyond capacity). See Triage for the reasons.</p> : null}
               </div>
             )}
-          {selectedIssue && byId.get(selectedIssue) ? <div className="panel-issue"><IssueCard issue={byId.get(selectedIssue)} /></div> : null}
         </div>
       </aside>
     </div>

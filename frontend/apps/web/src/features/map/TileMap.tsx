@@ -64,6 +64,15 @@ function vehicleImage(p: ReturnType<typeof palette>): ImageData {
   return g.getImageData(0, 0, S, S);
 }
 
+// a small chevron drawn along routes to show which way the truck goes: light with a dark rim, so it reads on
+// any route colour and stays about as wide as the line
+function arrowImage(p: ReturnType<typeof palette>): ImageData {
+  const S = 24, c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d')!;
+  g.translate(S / 2, S / 2); g.beginPath(); g.moveTo(-5, -7); g.lineTo(5, 0); g.lineTo(-5, 7);
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = p.ink; g.lineWidth = 6; g.stroke(); g.strokeStyle = p.surface; g.lineWidth = 3; g.stroke();
+  return g.getImageData(0, 0, S, S);
+}
+
 function alertCard(i: Issue): HTMLElement {
   const el = document.createElement('div'); el.className = 'map-alert';
   const head = document.createElement('div'); head.className = 'map-alert-h';
@@ -113,7 +122,7 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
         // quieter basemap: no POIs or house numbers competing with alerts
         map.getStyle().layers.forEach(l => { if (/poi|housenumber|aeroway/i.test(l.id)) map!.setLayoutProperty(l.id, 'visibility', 'none'); });
         CATS.forEach(c => [1, 2, 3, 4, 5].forEach(s => map!.addImage(`a-${c}-${s}`, alertImage(c, s, p), { pixelRatio: 2 })));
-        map.addImage('veh', vehicleImage(p), { pixelRatio: 2 });
+        map.addImage('veh', vehicleImage(p), { pixelRatio: 2 }); map.addImage('route-arrow', arrowImage(p), { pixelRatio: 2 });
         (Object.keys(SITE_GLYPH) as SiteKind[]).forEach(k => { map!.addImage(`site-${k}`, siteImage(k, p, false), { pixelRatio: 2 }); map!.addImage(`site-${k}-sel`, siteImage(k, p, true), { pixelRatio: 2 }); });
         const src = (id: string, extra: Record<string, unknown> = {}) => map!.addSource(id, { type: 'geojson', data: fc(), ...extra });
         src('track'); src('done'); src('stops'); src('routes', { lineMetrics: true }); src('crews'); src('depot'); src('sites'); src('sel'); src('veh'); src('ralerts'); src('zones'); src('zone-mask'); src('zone-labels'); src('draw'); src('draw-pts');
@@ -129,8 +138,9 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
         map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zone-labels', layout: { 'text-field': ['get', 'label'], 'text-font': FONT, 'text-size': 11, 'text-optional': true, 'text-max-width': 14 }, paint: { 'text-color': ['case', ['==', ['get', 'sel'], 1], p.accent, p.ink2], 'text-halo-color': p.surface, 'text-halo-width': 1.6 } });
         map.addLayer({ id: 'ralert-line', type: 'line', source: 'ralerts', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': p.bad, 'line-width': ['case', ['>=', ['get', 'sev'], 4], 6, 4], 'line-opacity': ['case', ['>=', ['get', 'sev'], 4], 0.55, 0.3] }, layout: { 'line-cap': 'round' } });
         map.addLayer({ id: 'ralert-pt', type: 'circle', source: 'ralerts', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 5, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': p.bad, 'circle-stroke-width': 2, 'circle-stroke-opacity': ['case', ['>=', ['get', 'sev'], 4], 0.9, 0.5] } });
-        map.addLayer({ id: 'routes', type: 'line', source: 'routes', paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': ['case', ['==', ['get', 'dim'], 1], 0.12, 0.9] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+        map.addLayer({ id: 'routes', type: 'line', source: 'routes', paint: { 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': ['case', ['==', ['get', 'dim'], 1], 0.18, 1] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
         map.addLayer({ id: 'routes-flow', type: 'line', source: 'routes', paint: { 'line-color': p.surface, 'line-width': 1.2, 'line-opacity': 0.85, 'line-dasharray': DASHES[0]! }, layout: { 'line-join': 'round' } });
+        map.addLayer({ id: 'routes-dir', type: 'symbol', source: 'routes', layout: { 'symbol-placement': 'line', 'symbol-spacing': 110, 'icon-image': 'route-arrow', 'icon-rotation-alignment': 'map', 'icon-keep-upright': false, 'icon-allow-overlap': true, 'icon-ignore-placement': true }, paint: { 'icon-opacity': ['case', ['==', ['get', 'dim'], 1], 0.2, 0.95] } });
         // operating sites: square badges per kind, labelled where the name fits (labels drop on collision)
         map.addLayer({ id: 'sites', type: 'symbol', source: 'sites', layout: { 'icon-image': ['get', 'icon'], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['get', 'sel'] }, paint: { 'icon-opacity': ['case', ['==', ['get', 'dim'], 1], 0.4, 1] } });
         map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites', layout: { 'text-field': ['get', 'label'], 'text-font': FONT, 'text-size': 11, 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-optional': true, 'text-max-width': 12 }, paint: { 'text-color': ['get', 'color'], 'text-halo-color': p.surface, 'text-halo-width': 1.8, 'text-opacity': ['case', ['==', ['get', 'dim'], 1], 0.5, 1] } });

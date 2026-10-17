@@ -12,6 +12,16 @@ import { ALERT_NOUN, GLYPH, ROUTE_TONES, SITE_GLYPH, SITE_NOUN } from './glyphs'
 
 const pts = (a: Array<[number, number]>) => a.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
 const path = (a: Array<[number, number]>) => a.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('');
+/** points every `step` along a polyline, each with the heading in degrees: where a route's direction chevrons go */
+function arrowsAlong(a: Array<[number, number]>, step: number) {
+  const out: Array<{ x: number; y: number; deg: number }> = []; let next = step / 2;
+  for (let i = 1, run = 0; i < a.length; i++) {
+    const [x1, y1] = a[i - 1]!, [x2, y2] = a[i]!; const d = Math.hypot(x2 - x1, y2 - y1); if (!d) continue;
+    while (next <= run + d) { const t = (next - run) / d; out.push({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t, deg: (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI }); next += step; }
+    run += d;
+  }
+  return out;
+}
 
 export default function SchematicMap({ issues, emphasise, selectedId, onSelect, track = [], travelled = 0, vehicle, routes = [], depot, depots = [], roadAlerts = [], sites = [], selectedSiteId, onSiteSelect, onMapClick, zones = [], onZoneSelect, drawing, focus, label, minSpan = 500 }: MapViewProps) {
   const box = useRef<HTMLDivElement>(null); const svg = useRef<SVGSVGElement>(null);
@@ -84,6 +94,7 @@ export default function SchematicMap({ issues, emphasise, selectedId, onSelect, 
             ? <path key={`ra-${a.id}`} className={`m-ralert${a.severity >= 4 ? ' hard' : ''}`} d={path(a.path.map(P))}><title>{a.label}</title></path>
             : (() => { const [x, y] = P([a.lat, a.lon]); return <circle key={`ra-${a.id}`} className={`m-ralert-pt${a.severity >= 4 ? ' hard' : ''}`} cx={x} cy={y} r={pr * 1.1}><title>{a.label}</title></circle>; })())}
           {routes.map(r => <path key={`${r.id}:${r.path.length}`} className={`m-route${r.dim ? ' dim' : ''}`} data-cat={r.category} d={path(r.path.map(P))} pathLength={1} data-tone={r.tone != null ? (r.tone % ROUTE_TONES) + 1 : undefined} />)}
+          {routes.flatMap(r => arrowsAlong(r.path.map(P), 110 / k).map((a, n) => <path key={`ar-${r.id}-${n}`} className={`m-arrow${r.dim ? ' dim' : ''}`} d="M-5 -7L5 0L-5 7" transform={`translate(${a.x} ${a.y}) rotate(${a.deg}) scale(${0.5 / k})`} />))}
           {routes.filter(r => !r.dim).flatMap(r => (r.stops ?? []).map(st => { const [x, y] = P(st.at); return <g key={`${r.id}-${st.n}`} className={`m-stop${st.done ? ' done' : ''}`} data-cat={r.category} data-tone={r.tone != null ? (r.tone % ROUTE_TONES) + 1 : undefined} transform={`translate(${x} ${y})`}><circle r={pr * 1.6} /><text fontSize={pr * 1.9} textAnchor="middle" dy={pr * 0.65}>{st.n}</text><title>{`Stop ${st.n} · ETA ${st.eta}`}</title></g>; }))}
           {routes.filter(r => r.at && !r.dim).map(r => { const [x, y] = P(r.at!); return <circle key={`crew-${r.id}`} className="m-crew" data-cat={r.category} data-tone={r.tone != null ? (r.tone % ROUTE_TONES) + 1 : undefined} cx={x} cy={y} r={pr * 1.1} />; })}
           {trackXY.length > 1 && <><path className="m-track-dim" d={path(trackXY)} /><path className="m-track" d={path(trackXY.slice(0, cut))} /></>}
