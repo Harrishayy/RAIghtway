@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Raightway pipeline</title>
+<!-- The README's pipeline.gif, recorded by record.py. Numbers are from the live backend on 17 Oct 2026:
+     the report's provenance (GET /api/report), the latest plan (GET /api/plan), road alerts (GET /api/hazards)
+     and the W&B Weave project's traced calls for Raightway's ops (client.get_calls). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500;600&family=Public+Sans:wght@400;500;600&display=block" rel="stylesheet">
+<style>
+  :root {
+    --bg:#ECEEE9; --surface:#F8F8F5; --surface-2:#E1E4DC; --ink:#16212B; --ink-2:#55606B; --line:#C8CDC3;
+    --accent:#C81D63; --nv:#76B900; --cw:#2741E7; --vast:#E4002B; --wb:#FFBE00; --city:#5b6475;
+    --fd:'Barlow Semi Condensed','Arial Narrow',sans-serif; --fb:'Public Sans',system-ui,sans-serif; --fm:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  html, body { width:1440px; height:810px; overflow:hidden; background:var(--bg); color:var(--ink); font-family:var(--fb) }
+  header { display:flex; align-items:baseline; gap:18px; padding:30px 44px 0 }
+  .logo { font:700 30px/1 var(--fd); letter-spacing:.06em }
+  .logo i { color:var(--accent); font-style:normal }
+  header p { font:500 18px/1.3 var(--fb); color:var(--ink-2) }
+  header .when { margin-left:auto; font:500 13px var(--fm); color:var(--ink-2); text-transform:uppercase; letter-spacing:.06em }
+
+  .flow { position:relative; display:grid; grid-template-columns:repeat(6,1fr); gap:16px; padding:28px 44px 0 }
+  .rail { position:absolute; left:44px; right:44px; top:52px; height:3px; background:var(--line) }
+  .rail b { display:block; height:100%; background:var(--accent); transform:scaleX(0); transform-origin:left; transition:transform 1.7s linear }
+  .stage { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 16px 18px;
+           opacity:.32; transform:translateY(10px); transition:opacity .45s, transform .45s, border-color .45s, box-shadow .45s; min-height:330px;
+           display:flex; flex-direction:column }
+  .stage.on { opacity:1; transform:none; border-color:var(--ink); box-shadow:0 10px 28px rgba(22,33,43,.12) }
+  .step { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%;
+          background:var(--surface-2); font:600 14px var(--fm); transition:background .45s, color .45s }
+  .stage.on .step { background:var(--accent); color:#fff }
+  .verb { margin-top:12px; font:700 15px var(--fm); letter-spacing:.1em; color:var(--accent) }
+  h2 { margin-top:4px; font:700 25px/1.05 var(--fd) }
+  .what { margin-top:8px; font:400 14.5px/1.4 var(--fb); color:var(--ink-2); min-height:104px }
+  .big { margin-top:auto; font:700 52px/1 var(--fd); font-variant-numeric:tabular-nums }
+  .unit { margin-top:4px; font:500 13.5px/1.35 var(--fb); color:var(--ink-2); min-height:54px }
+  .chips { display:flex; flex-wrap:wrap; align-content:flex-start; gap:6px; margin-top:12px; min-height:50px }
+  .chip { font:600 11.5px/1 var(--fm); text-transform:uppercase; letter-spacing:.05em; padding:5px 7px; border-radius:5px; color:#fff }
+  .nv { background:var(--nv); color:#0b1400 } .cw { background:var(--cw) } .vast { background:var(--vast) } .wb { background:var(--wb); color:#1d1600 } .city { background:var(--city) }
+
+  .weave { margin:18px 44px 0; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:14px 18px 16px;
+           display:grid; grid-template-columns:270px 1fr; gap:24px; align-items:center }
+  .weave h3 { font:700 22px/1.1 var(--fd) }
+  .weave h3 .chip { vertical-align:3px; margin-right:6px }
+  .weave .total { margin-top:8px; font:700 44px/1 var(--fd); font-variant-numeric:tabular-nums }
+  .weave .sub { margin-top:4px; font:500 13px/1.35 var(--fb); color:var(--ink-2) }
+  .ops { display:grid; grid-template-columns:repeat(2,1fr); gap:5px 28px }
+  .op { display:grid; grid-template-columns:150px 1fr 54px 62px; align-items:center; gap:10px; font:500 13px var(--fm); opacity:.35; transition:opacity .4s }
+  .op.on { opacity:1 }
+  .op .bar { height:10px; background:var(--surface-2); border-radius:3px; overflow:hidden }
+  .op .bar b { display:block; height:100%; transform:scaleX(0); transform-origin:left; transition:transform 1.1s cubic-bezier(.2,.7,.2,1) }
+  .op .n, .op .ms { text-align:right; font-variant-numeric:tabular-nums } .op .ms { color:var(--ink-2) }
+  footer { position:absolute; left:44px; right:44px; bottom:24px; display:flex; justify-content:space-between; font:500 14px var(--fb); color:var(--ink-2);
+           opacity:0; transition:opacity .6s }
+  footer.on { opacity:1 }
+  footer b { color:var(--ink); font-weight:600 }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">R<i>AI</i>GHTWAY</span>
+  <p>How unwatched fleet footage becomes tomorrow's crew plan</p>
+  <span class="when">live numbers · 17 Oct 2026</span>
+</header>
+
+<section class="flow">
+  <div class="rail"><b id="rail"></b></div>
+  <div class="stage"><span class="step">1</span><div class="verb">INGEST</div><h2>VAST DataEngine</h2>
+    <p class="what">Toronto dashcam drives, cut and indexed by the VSS blueprint; plain-language search over all of it</p>
+    <div class="big" data-n="1080">0</div><p class="unit">5 s segments, 16 drives, 1.5 hours of footage</p>
+    <div class="chips"><span class="chip vast">VAST VSS</span><span class="chip vast">VAST S3</span></div></div>
+  <div class="stage"><span class="step">2</span><div class="verb">SEE</div><h2>Cosmos3-Reason</h2>
+    <p class="what">Finds six kinds of defect in each 5 s piece, boxes it on its keyframe, pins it from 1 Hz GPS</p>
+    <div class="big" data-n="572">0</div><p class="unit">sightings, each boxed and placed on the map</p>
+    <div class="chips"><span class="chip nv">NVIDIA</span><span class="chip cw">CoreWeave GPUs</span></div></div>
+  <div class="stage"><span class="step">3</span><div class="verb">GRADE</div><h2>Cosmos3-Reason</h2>
+    <p class="what">Re-grades every finding from its boxed close-up: severity 1–5, a reason, defect or not</p>
+    <div class="big" data-n="136">0</div><p class="unit">judged not a defect: kept on record, left out of the plan</p>
+    <div class="chips"><span class="chip nv">NVIDIA</span><span class="chip cw">CoreWeave GPUs</span></div></div>
+  <div class="stage"><span class="step">4</span><div class="verb">REMEMBER</div><h2>VastDB</h2>
+    <p class="what">Merges re-sightings within 35 m; Cosmos-Embed1 vectors power similar-issue search</p>
+    <div class="big" data-n="455">0</div><p class="unit">issues after 103 re-sightings merged; 572 vectors in VastDB</p>
+    <div class="chips"><span class="chip vast">VastDB vectors</span><span class="chip nv">Cosmos-Embed1</span></div></div>
+  <div class="stage"><span class="step">5</span><div class="verb">DECIDE</div><h2>Nemotron</h2>
+    <p class="what">Work orders, the city report, triage, crew scenarios, search answers and Ask</p>
+    <div class="big" data-n="319">0</div><p class="unit">open issues in tomorrow's report, by Nemotron 3 Ultra</p>
+    <div class="chips"><span class="chip nv">NVIDIA</span><span class="chip wb">W&amp;B Inference</span></div></div>
+  <div class="stage"><span class="step">6</span><div class="verb">ACT</div><h2>cuOpt</h2>
+    <p class="what">Round trips from each crew's own yard on street times, around the City's road closures</p>
+    <div class="big" data-n="146">0</div><p class="unit">jobs on 25 trucks, solved in 9.4 s, with 66 City closures on the map</p>
+    <div class="chips"><span class="chip nv">NVIDIA cuOpt</span><span class="chip city">City of Toronto</span></div></div>
+</section>
+
+<section class="weave">
+  <div>
+    <h3><span class="chip wb">W&amp;B Weave</span>Model ops, traced</h3>
+    <div class="total" id="total">0</div>
+    <p class="sub">calls traced for Raightway's ops since 9 Oct, prompts and replies as text, never media</p>
+  </div>
+  <div class="ops" id="ops"></div>
+</section>
+
+<footer id="foot"><span>Every integration has a fallback, and <b>the console says which one answered</b>.</span><span>github.com/Harrishayy/raightway</span></footer>
+
+<script>
+  // Weave: calls per op and median seconds, for Raightway's ops; `at` is the stage that lights the op up.
+  const OPS = [
+    ['find_issues', 69, 4.1, 1, 'nv'], ['box', 29, 2.7, 1, 'nv'], ['rate', 599, 1.2, 2, 'nv'], ['embed_clip', 579, 0.16, 3, 'nv'],
+    ['nemotron_json', 147, 9.9, 4, 'wb'], ['work_orders', 62, 19.9, 4, 'wb'], ['triage_with_model', 14, 14.3, 4, 'wb'],
+    ['recommend_propose', 6, 6.9, 5, 'wb'], ['recommend_pick', 5, 4.1, 5, 'wb'], ['scenario_solved', 23, 0.0, 5, 'nv'],
+  ];
+  const COLOR = { nv: 'var(--nv)', wb: 'var(--wb)' };
+  const ops = document.getElementById('ops');
+  for (const [name, n, s, , c] of OPS) {
+    const row = document.createElement('div'); row.className = 'op';
+    row.innerHTML = `<span>${name}</span><span class="bar"><b style="background:${COLOR[c]}"></b></span><span class="n">0</span><span class="ms">${s < 0.1 ? '<0.1' : s} s</span>`;
+    ops.appendChild(row);
+  }
+  const fmt = n => n.toLocaleString('en-US');
+  function count(el, to, ms) {
+    const t0 = performance.now();
+    const tick = now => { const k = Math.min(1, (now - t0) / ms); el.textContent = fmt(Math.round(to * (1 - Math.pow(1 - k, 3)))); if (k < 1) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  }
+  window.__play = () => {
+    const stages = [...document.querySelectorAll('.stage')]; const rows = [...ops.children];
+    const max = Math.max(...OPS.map(o => o[1])); let traced = 0; const total = document.getElementById('total');
+    stages.forEach((st, i) => setTimeout(() => {
+      st.classList.add('on'); count(st.querySelector('.big'), +st.querySelector('.big').dataset.n, 1100);
+      document.getElementById('rail').style.transform = `scaleX(${i / (stages.length - 1)})`;
+      OPS.forEach(([, n, , at], k) => { if (at !== i) return;
+        rows[k].classList.add('on'); rows[k].querySelector('b').style.transform = `scaleX(${Math.max(0.02, n / max)})`; count(rows[k].querySelector('.n'), n, 900); traced += n; });
+      count(total, traced, 900);
+    }, 400 + i * 2100));
+    setTimeout(() => document.getElementById('foot').classList.add('on'), 400 + stages.length * 2100);
+  };
+</script>
+</body>
+</html>

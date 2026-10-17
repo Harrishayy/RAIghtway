@@ -1,16 +1,28 @@
 # README media
 
-The root `README.md` shows `review.png`, `issues.png`, `report.png` and `dispatch.png` (1920×1080 screenshots). To
-swap in recordings, capture these and point the README at the GIFs. Capture them from the console against the live backend
-(`pnpm dev`), in the Survey look, at 1600×1000, and trim idle time. Keep each GIF under about 8 MB so
-GitHub renders it inline; put full-quality `.mp4` versions next to them if you have them.
+The root `README.md` shows the GIFs here; each has a full-quality `.mp4` beside it.
 
-| File | Screen | What to show (10–20 s) |
+| File | What it shows | Sponsor services on screen |
 |---|---|---|
-| `review.gif` | Review | Open a drive, play it: boxes appear on findings, the timeline playhead moves, the car moves on the map, click a finding to jump to it |
-| `issues.gif` | Issues | Sort by severity, open a high-severity issue: frame with box, work order, sightings, "Similar issues · VastDB vector search" |
-| `report.gif` | Report | The summary, counts and recommended crews; press Regenerate |
-| `dispatch.gif` | Dispatch | Adjust a crew count, press Plan routes ("cuOpt · … s"), play the shift back, open the Roads tab |
-| `live.gif` | Review | Press Run: "Reading VAST index…", then the new drive at the top of Footage moving through its stages, provisional pins landing on the map, re-sightings merging. Each Run consumes up to 30 s of unseen footage, so rehearse with care: the first Run is the held-back demo street |
+| `pipeline.gif` | The six stages with live numbers, and W&B Weave trace counts (`pipeline.html`) | VAST, NVIDIA, CoreWeave, W&B, City of Toronto |
+| `review.gif` | A drive playing with Cosmos boxes, map pins, the severity reason | Cosmos3-Reason on CoreWeave, VAST S3, PIE GPS |
+| `search.gif` | Footage search for "pothole", Nemotron's answer, Ask with VSS evidence | VAST VSS, Nemotron on W&B Inference |
+| `issues.gif` | A severity-5 issue: frame, grade, work order, similar issues | Cosmos3-Reason, Nemotron, Cosmos-Embed1 + VastDB vector search |
+| `report.gif` | The situation report, priority list, data provenance | Nemotron 3 Ultra on W&B Inference |
+| `dispatch.gif` | Routes, the crew recommendation, road alerts, shift playback | cuOpt, Nemotron, City of Toronto closures |
 
-Optional: `walkthrough.mp4`, a narrated 2-minute cut for the submission.
+## Re-recording
+
+```bash
+pnpm dev                                   # the console on the live backend, from the repo root
+python3 docs/media/record.py               # all scenes, or name some: review search ...
+```
+
+Needs `pip install playwright`, Google Chrome (Playwright's own Chromium can't play the H.264 footage),
+`ffmpeg`, and optionally `gifsicle`. Each scene reads the screen before captioning it: Dispatch says cuOpt
+only when the plan says cuOpt, mentions Nemotron triage only when the plan was triaged by Nemotron, and
+Ask's caption counts the VSS captions the answer actually used. A scene fails if the page reloads mid-take.
+
+The scenes never press Run or Plan, and the search and Ask questions are ones the VSS cache already holds.
+The numbers in `pipeline.html` are a snapshot (17 Oct): update them from `GET /api/report`,
+`GET /api/plan`, `GET /api/hazards` and the Weave project before re-recording it.

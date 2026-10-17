@@ -22,28 +22,45 @@ Built at the **VAST Builders Challenge**, London, 17 Oct 2026 · Track: *Real-ti
 
 ## See it working
 
-Screen recordings of the console running against the live backend on Toronto dashcam footage.
+Recordings of the real console on the live backend and real Toronto footage, nothing staged. The strip at
+the bottom of each one names the sponsor service answering at that moment; idle waits for the network are cut.
 
-<div align="center">
+**The whole pipeline, with live numbers.** Six stages from footage to crews, each with the sponsor
+service that runs it, and the W&B Weave traces those services left behind.
 
-| **Review** | **Issues** |
-| :---: | :---: |
-| <img src="docs/media/review.png" alt="Review: footage list, player with detection boxes, timeline and map" width="420"> | <img src="docs/media/issues.png" alt="Issues: every open issue on a table and a map, with its frame and work order" width="420"> |
-| Pick a drive and play it. Each finding is boxed on the frame Cosmos saw it in, laid out by category on the timeline, and pinned on the map as the vehicle drives past. | Every open issue across the city, ranked by severity. Open one to see its frame, work order, every sighting, and similar issues found by VastDB vector search. |
+![Six stages from VAST footage to cuOpt routes, with live counts and W&B Weave trace counts](docs/media/pipeline.gif)
 
-| **Report** | **Dispatch** |
-| :---: | :---: |
-| <img src="docs/media/report.png" alt="Report: situation summary with counts and recommended crews" width="420"> | <img src="docs/media/dispatch.png" alt="Dispatch: cuOpt crew routes from their bases, around road closures" width="420"> |
-| A situation report written by Nemotron: what was found, where, how urgent, and how many crews of each type tomorrow needs. | Nemotron triages the jobs into today, later and defer, and proposes crew sizes that cuOpt scores. cuOpt then routes each crew as a round trip from its own site, on real streets around the city's live road closures. Play the shift back to watch the crews move. |
+**1. See: Cosmos finds every defect.** A Toronto drive from the VAST index plays back. Every finding is
+boxed on the frame Cosmos3-Reason (on CoreWeave GPUs) saw it in, pinned on the map from the drive's GPS,
+and re-graded from its close-up with a one-line reason.
 
-| **Live analysis** |
-| :---: |
-| Press **Run**. Raightway re-reads the VAST index, fetches up to three 30 s clips from VAST S3 and runs the whole pipeline on them live: findings pin themselves to the map as each 5 s piece is checked, re-sightings merge into known issues, and new ones get work orders. The first clip is footage no pass has analysed (a demo street held back from the overnight sweep); the others re-check reviewed streets on other drives and are labelled as re-checks. |
+![Review: a drive plays with Cosmos boxes on each finding, pins on the map and the severity reason](docs/media/review.gif)
 
-</div>
+**2. Search and ask: VSS and Nemotron.** A plain-language search runs over the VAST VSS index; Nemotron
+on W&B Inference answers from the matches and the issues already logged. Then a question to the drive,
+answered from its VSS captions, with times that seek the player.
 
-> Recordings go in [`docs/media/`](docs/media/); the list of shots to capture is in
-> [`docs/media/README.md`](docs/media/README.md).
+![Footage search for potholes over VSS, Nemotron's answer, and Ask about a drive with VSS evidence](docs/media/search.gif)
+
+**3. Remember and decide: one issue, end to end.** The worst hazards city-wide; one opens with Cosmos's
+box and grade, Nemotron's work order, and similar issues found by vector search inside VastDB.
+
+![Issues: a severity-5 work zone with its frame, Cosmos grade, Nemotron work order and VastDB similar issues](docs/media/issues.gif)
+
+**4. Decide: tomorrow's report.** Nemotron 3 Ultra writes the situation report; every figure in it comes
+from code, and its provenance says which model answered each step.
+
+![Report: Nemotron Ultra's summary, the priority list, and the data provenance](docs/media/report.gif)
+
+**5. Act: crews routed by cuOpt.** Nemotron proposes crew scenarios and cuOpt solves each to score them;
+cuOpt routes every crew from its own yard around the City's live closures. Play the shift to watch them go.
+
+![Dispatch: cuOpt routes, the Nemotron and cuOpt recommendation, road alerts, and shift playback](docs/media/dispatch.gif)
+
+Full-quality versions sit next to each GIF in [`docs/media/`](docs/media/) as `.mp4`. Re-record them all
+with `python3 docs/media/record.py` (see [`docs/media/README.md`](docs/media/README.md)). Live analysis
+(**Run**) isn't recorded here: each Run spends 30 s of footage nobody has analysed, and that footage is kept
+for the live demo.
 
 ---
 
