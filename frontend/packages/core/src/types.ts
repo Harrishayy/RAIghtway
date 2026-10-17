@@ -84,6 +84,8 @@ export interface Video {
   duration_s: number;
   /** Nemotron's explanation. `**bold**` marks the phrases worth scanning for. */
   explanation: string | null;
+  /** Who wrote `explanation`: Nemotron, or the template stand-in when Nemotron failed (UI extra). */
+  explanation_source?: 'nemotron' | 'template' | null;
   issue_ids: string[];
   track: LatLon[];
   /** UI extras */
@@ -247,6 +249,8 @@ export interface Triage {
   model: string; model_name?: string | null; min_severity: number; days: number; rationale: string;
   by_crew: Partial<Record<CrewType, string>>; capacity_min: Partial<Record<CrewType, number>>; clamped: number;
   decisions: TriageDecision[];
+  /** Who made the final decisions ("Nemotron decided N, rules M"), and why the rules decided when a model was asked. */
+  model_decisions?: number; rule_decisions?: number; note?: string | null;
 }
 export interface PlanDay { day: number; jobs: number; trucks: number; by_severity: Record<string, number>; drive_min: number; work_min: number; distance_km: number; last_back_min: number; solver: 'cuopt' | 'fallback' }
 export interface PlanSite { facility_id: string; label: string; kind: FacilityKind; trucks: Partial<Record<CrewType, number>>; jobs: number }
@@ -320,7 +324,13 @@ export interface Directions {
 export interface TrackPoint { t: number; lat: number; lon: number; heading: number; speed_kmh: number }
 
 /** A semantic-search hit from VSS `POST /api/v1/search` (`chunk_results`), placed on a video's timeline. */
-export interface TopicHit { video_id: string; start: number; end: number; score: number; caption: string }
+export interface TopicHit { video_id: string; start: number; end: number; score: number; caption: string; similarity?: number }
+/** `POST /api/search`: VSS matches on the listed drives, VSS's own synthesis, and Nemotron's answer from the matches
+ *  and the issues already logged inside them (`answer_source` null: no answer, show the synthesis). */
+export interface TopicSearch { query: string; hits: TopicHit[]; search?: 'vss'; synthesis?: string; answer?: string; answer_source?: 'nemotron' | null; logged?: number }
+/** `POST /api/videos/{id}/ask`: an answer about one drive, from VSS captions (`evidence`) and its logged issues. */
+export interface AskEvidence { start: number; end: number; caption: string; kind: 'segment' | 'search' }
+export interface AskAnswer { question: string; answer: string; source: 'nemotron' | 'vss'; times: number[]; evidence: AskEvidence[]; issue_ids: string[] }
 export interface Topic { id: string; query: string; hits: TopicHit[]; pending?: boolean }
 
 export interface Depot { lat: number; lon: number; label: string }

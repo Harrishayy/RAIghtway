@@ -163,9 +163,15 @@ export function useUpdateIssue() {
     onError: e => toast({ tone: 'bad', title: 'Could not update the issue', body: (e as Error).message }),
   });
 }
+/** The footage search (VSS hits, VSS synthesis, Nemotron's answer). The query is lower-cased like the backend's cache key. */
 export function useTopic(query: string) {
-  const c = useClient(); const q = query.trim();
-  return useQuery({ queryKey: keys.topic(q), queryFn: ({ signal }) => c.searchTopic(q, signal), enabled: c.capabilities.topicSearch && q.length > 2, staleTime: 5 * 60_000 });
+  const c = useClient(); const q = query.trim().replace(/\s+/g, ' ').toLowerCase();
+  return useQuery({ queryKey: keys.topic(q), queryFn: ({ signal }) => c.searchFootage(q, signal), enabled: c.capabilities.topicSearch && q.length > 2, staleTime: 5 * 60_000 });
+}
+/** Ask what happened on a drive (VSS evidence, Nemotron answer). Errors stay on the mutation for the panel to show. */
+export function useAsk() {
+  const c = useClient();
+  return useMutation({ mutationFn: (a: { videoId: string; question: string; t: number | null }) => c.ask(a.videoId, a.question, a.t) });
 }
 /** Planning zones: the City's wards and areas drawn in the console (they change rarely). */
 export function useZones() {

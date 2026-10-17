@@ -3,6 +3,7 @@
 // default instead of a blank screen. Unknown keys are kept, so adapters can read backend extras.
 import { z } from 'zod';
 import type { Directions, Facility, GeocodeHit, Zone, Hazard, Issue, Plan, Recommendation, Report, ReportPayload, Similar, TopicHit, Video } from './types';
+import type { AskAnswer, TopicSearch } from './types';
 
 const num = (d = 0) => z.coerce.number().catch(d);
 const str = (d = '') => z.coerce.string().catch(d);
@@ -47,6 +48,7 @@ export const VideoSchema = z.looseObject({
   stage: StageId.nullable().catch(null).default(null),
   drive: z.string().nullable().catch(null).default(null), start_s: num(0), duration_s: num(0),
   explanation: z.string().nullable().catch(null).default(null), issue_ids: z.array(z.coerce.string()).catch([]),
+  explanation_source: z.enum(['nemotron', 'template']).nullable().optional().catch(undefined),
   track: z.array(latLon).catch([]),
   camera_id: z.string().optional().catch(undefined), video_url: z.string().nullable().optional().catch(undefined),
   gps: z.array(TrackPoint).optional().catch(undefined), recorded_at: z.string().nullable().optional().catch(undefined),
@@ -149,6 +151,7 @@ const TriageSchema = z.object({
     issue_id: z.coerce.string(), crew: CrewType, severity: num(3), decision: z.enum(['today', 'later', 'defer']),
     reason: str(), by: z.enum(['rule', 'model']).catch('rule'), pinned: z.boolean().optional().catch(undefined),
   })),
+  model_decisions: num(0).optional(), rule_decisions: num(0).optional(), note: optStr,
 });
 const ScenarioMetricsSchema = z.object({
   jobs_selected: num(0), jobs_routed: num(0), s5_total: num(0), s5_covered: num(0), s4_total: num(0), s4_covered: num(0),
@@ -193,7 +196,13 @@ export const DirectionsSchema = z.object({
   path: z.array(latLon).catch([]), minutes: num(0), distance_km: num(0), path_source: z.enum(['road', 'straight']).catch('straight'),
   warnings: z.array(RouteWarningSchema).catch([]), alternatives: num(1), maps_url: str(),
 });
-export const TopicHitSchema = z.object({ video_id: str(), start: num(), end: num(), score: num(), caption: str() });
+export const TopicHitSchema = z.object({ video_id: str(), start: num(), end: num(), score: num(), caption: str(), similarity: z.coerce.number().optional().catch(undefined) });
+const AskEvidenceSchema = z.object({ start: num(), end: num(), caption: str(), kind: z.enum(['segment', 'search']).catch('segment') });
+export const AskAnswerSchema = z.object({
+  // answer is a strict string: coerce would turn a missing answer into "undefined"
+  question: str(), answer: z.string().catch(''), source: z.enum(['nemotron', 'vss']).catch('vss'), times: z.array(z.coerce.number()).catch([]),
+  evidence: z.array(AskEvidenceSchema).catch([]), issue_ids: z.array(z.coerce.string()).catch([]),
+});
 
 /** Parses a list, dropping (and reporting) items that can't be repaired rather than failing the whole list. */
 function list<T>(schema: z.ZodType<T>, raw: unknown, what: string, onDrop?: (what: string, err: z.ZodError) => void): T[] {
@@ -240,5 +249,18 @@ export const parse = {
     const o = raw as Record<string, unknown> | unknown[];
     const arr = Array.isArray(o) ? o : (o?.hits ?? o?.chunk_results ?? []);
     return list(TopicHitSchema, arr, 'search hit');
+  },
+  /** The whole search answer; a bare hit list (older backends) parses with no synthesis or answer. */
+  topicSearch: (raw: unknown, query: string): TopicSearch => {
+    const o = (Array.isArray(raw) ? {} : raw ?? {}) as Record<string, unknown>;
+    const text = (v: unknown) => (typeof v === 'string' ? v : '');
+    return { query: text(o.query) || query, hits: parse.topicHits(raw), search: o.search === 'vss' ? 'vss' : undefined,
+      synthesis: text(o.synthesis), answer: text(o.answer), answer_source: o.answer_source === 'nemotron' && text(o.answer) ? 'nemotron' : null,
+      logged: Number.isFinite(Number(o.logged)) ? Number(o.logged) : 0 };
+  },
+  askAnswer: (raw: unknown): AskAnswer => {
+    const r = AskAnswerSchema.safeParse(raw);
+    if (!r.success || !r.data.answer.trim()) throw new Error('The answer could not be read');
+    return r.data;
   },
 };

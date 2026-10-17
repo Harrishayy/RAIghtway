@@ -1,6 +1,7 @@
 // The one seam between the UI and a backend. Screens only ever call these methods, so pointing the
 // console at a different service means writing (or configuring) one adapter, not touching components.
 import type { BBox, CategoryId, CrewCounts, Depot, Directions, DispatchOptions, Facility, FacilityInput, GeocodeHit, Hazard, Issue, LatLon, Plan, Recommendation, RecommendOptions, RecommendProgress, ReportPayload, Severity, Similar, TopicHit, Video, Zone } from '../types';
+import type { AskAnswer, TopicSearch } from '../types';
 
 /** What this backend can do. The UI hides controls for anything switched off. */
 export interface Capabilities {
@@ -12,6 +13,8 @@ export interface Capabilities {
   similar: boolean;
   /** Free-text search over footage (VSS). Adds the topic lane to the timeline. */
   topicSearch: boolean;
+  /** POST /api/videos/{id}/ask: ask what happened on a drive (VSS evidence, Nemotron answer). */
+  ask: boolean;
   /** Real JPEG frames at Issue.frame_url. Off: the UI draws a placeholder frame. */
   frames: boolean;
   /** Road alerts and closure-aware directions (GET /api/hazards, POST /api/directions). */
@@ -80,6 +83,10 @@ export interface RaightwayClient {
   /** Starts a live analysis of unseen footage from the VAST index; resolves with its Video (queued). */
   run(): Promise<Video>;
   searchTopic(query: string, signal?: AbortSignal): Promise<TopicHit[]>;
+  /** The full footage search (POST /api/search): hits plus VSS's synthesis and Nemotron's answer. */
+  searchFootage(query: string, signal?: AbortSignal): Promise<TopicSearch>;
+  /** Ask about one drive; `t` is the playhead (seconds), omitted to ask about the whole drive. */
+  ask(videoId: string, question: string, t?: number | null, signal?: AbortSignal): Promise<AskAnswer>;
   /** Saves an operator-reported issue (source "manual"); resolves with it once frame, GPS and work order are in. */
   createIssue(input: ManualIssueInput): Promise<Issue>;
   /** Pin/unpin an issue or override its severity; resolves with the updated issue. */

@@ -37,6 +37,8 @@ WORK_SHARE = 0.65            # of a shift after lunch, the share spent on site (
 TODAY_SLACK = 1.1            # today may run 10% over the estimate; cuOpt has the final say
 BUNDLE_KM = 0.25             # about a city block: close enough to do on the way
 MODEL_JOBS = 45              # jobs shown to the model one by one (worst first); the rest follow the rules
+RETRY_JOBS = 20              # a second, smaller ask when the first reply covered too few jobs
+MIN_SHARE = 0.5              # usable model decisions needed, as a share of the jobs listed
 TIMEOUT_S = 40.0
 CREW_NAME = {"roads": "Roads", "graffiti": "Graffiti", "markings": "Markings", "inspection": "Work-zone inspection",
              "signage": "Signage", "sanitation": "Sanitation"}
@@ -46,8 +48,9 @@ from dashcam findings (severity 1-5: 5 = safety hazard today, 4 = this week, 3 =
 each crew type's work capacity per day in minutes, and how many days this plan covers.
 
 Each listed job carries rule_suggestion: "today" (day 1), "later" (a later day of this plan) or "defer" (not in
-this plan). Return decisions only for jobs where you change the suggestion or can give a sharper reason
-(at most 25); every other job keeps its suggestion.
+this plan). Return one decision for EVERY listed job, using its id exactly as given: keep the suggestion or
+change it, and either way give your own short reason. (Severity 5 and pinned jobs are already fixed and are
+not listed.)
 Fixed rules you must follow: severity 5 and jobs pinned by the operator are always today; severity 4 is never deferred while there is room;
 keep today's minutes for a crew type within its capacity per day; a severity 1-2 job may go today only when
 it is next to another job going today (bundle it, and say so). Prefer jobs seen several times, and jobs
@@ -200,10 +203,24 @@ def clamp(proposed: dict[str, tuple[Decision, str]], jobs: list[IssueRecord], ba
     return out, clamped
 
 
+def listed(jobs: list[IssueRecord], min_severity: int, cap: dict[str, int]) -> list[IssueRecord]:
+    """The jobs the model decides on: at or above the floor, with a crew, and not fixed by a rule (S5, pinned)."""
+    return sorted((i for i in jobs if i.severity >= min_severity and not _must(i)
+                   and cap.get(CREW_FOR[i.category], 0) > 0), key=_rank)[:MODEL_JOBS]
+
+
+def unsure(jobs: list[IssueRecord], baseline: dict[str, TriageDecision]) -> list[IssueRecord]:
+    """Where the rules are least certain: S4 and S3 jobs the rules sent later or deferred, then today's S3s
+    (the capacity boundary), then the rest."""
+    def key(i: IssueRecord) -> tuple:
+        d = baseline[i.id].decision
+        return (not (d != "today" and i.severity >= 3), not (d == "today" and i.severity == 3), _rank(i))
+    return sorted(jobs, key=key)[:RETRY_JOBS]
+
+
 def _facts(jobs: list[IssueRecord], baseline: dict[str, TriageDecision], min_severity: int,
-           cap: dict[str, int], trucks: dict[str, int], days: int) -> dict:
-    eligible = sorted((i for i in jobs if (i.severity >= min_severity or pinned(i))
-                       and cap.get(CREW_FOR[i.category], 0) > 0), key=_rank)
+           cap: dict[str, int], trucks: dict[str, int], days: int, only: list[IssueRecord] | None = None) -> dict:
+    eligible = only if only is not None else listed(jobs, min_severity, cap)
     counts: dict[str, Counter] = defaultdict(Counter)
     work: dict[str, int] = defaultdict(int)
     for i in jobs:
@@ -219,7 +236,7 @@ def _facts(jobs: list[IssueRecord], baseline: dict[str, TriageDecision], min_sev
                   "minutes": minutes(i), "sightings": i.sightings, "pinned_by_operator": pinned(i), "description": ((getattr(i, "name", None) or "").strip() or i.description)[:140],
                   "severity_reason": (i.severity_reason or "")[:160] or None,
                   "lat": round(i.lat, 4), "lon": round(i.lon, 4),
-                  "rule_suggestion": baseline[i.id].decision} for i in eligible[:MODEL_JOBS]],
+                  "rule_suggestion": baseline[i.id].decision} for i in eligible],
     }
 
 
@@ -251,32 +268,56 @@ def _template(decisions: dict[str, TriageDecision], min_severity: int, days: int
     return rationale, notes
 
 
+async def _ask(facts: dict) -> "_TriageReply":
+    return _TriageReply.model_validate(await asyncio.wait_for(triage_with_model(facts), TIMEOUT_S + 5))
+
+
 async def decide(jobs: list[IssueRecord], min_severity: int, trucks: dict[str, int], days: int,
                  use_model: bool = True) -> Triage:
-    """Triage the open, located jobs. Never raises: with no model the rules decide, and Triage.model says so."""
+    """Triage the open, located jobs. Never raises: with no model the rules decide, and Triage.model says so.
+
+    The model is asked for a decision on every listed job. A reply that covers fewer than MIN_SHARE of them
+    gets one smaller retry on the jobs where the rules are least sure; if the model still decides nothing,
+    the triage is labelled "rules" with the reason in `note`. `model_decisions` / `rule_decisions` count who
+    made each final decision."""
     cap = capacity(trucks)
     baseline = rules(jobs, min_severity, cap, days)
     decisions, clamped = baseline, 0
     rationale, by_crew = _template(baseline, min_severity, days)
-    model, model_name = "rules", None
-    candidates = [i for i in jobs if i.severity >= min_severity and cap.get(CREW_FOR[i.category], 0) > 0]
-    if use_model and candidates:
+    model, model_name, note = "rules", None, None
+    ask = listed(jobs, min_severity, cap)
+    if use_model and ask:
         started = time.perf_counter()
+        proposed: dict[str, tuple] = {}
+        reply = None
         try:
-            raw = await asyncio.wait_for(
-                triage_with_model(_facts(jobs, baseline, min_severity, cap, trucks, days)), TIMEOUT_S + 5)
-            reply = _TriageReply.model_validate(raw)
-            proposed = {p.issue_id: (p.decision, p.reason) for p in reply.decisions}
+            reply = await _ask(_facts(jobs, baseline, min_severity, cap, trucks, days, ask))
+            ids = {i.id for i in ask}
+            proposed = {p.issue_id: (p.decision, p.reason) for p in reply.decisions if p.issue_id in ids}
+            if len(proposed) < MIN_SHARE * len(ask):
+                retry = [i for i in unsure(ask, baseline) if i.id not in proposed]
+                log.info("Triage: %d of %d decisions usable; asking again for %d", len(proposed), len(ask), len(retry))
+                if retry:
+                    again = await _ask(_facts(jobs, baseline, min_severity, cap, trucks, days, retry))
+                    ids = {i.id for i in retry}
+                    proposed |= {p.issue_id: (p.decision, p.reason) for p in again.decisions if p.issue_id in ids}
+                    reply = again if not reply.rationale.strip() else reply
+        except Exception as exc:
+            log.warning("Triage: rules fallback (%s)", config.redact(exc))
+            note = f"Nemotron did not answer ({config.redact(exc)[:80]}); the rules decided."
+        if proposed and reply is not None:
             decisions, clamped = clamp(proposed, jobs, baseline, min_severity, cap, days)
             from app.ai import nemotron
             model, model_name = MODELS.get(nemotron.ULTRA, ("nemotron", nemotron.ULTRA))
-            rationale = " ".join(reply.rationale.split())[:600]
-            by_crew = {c: " ".join(t.split())[:240] for c, t in reply.by_crew.items() if c in CREW_NAME and t.strip()}
-            log.info("Triage: %s answered %d decisions in %.1f s, %d clamped", model, len(proposed),
-                     time.perf_counter() - started, clamped)
-        except Exception as exc:
-            log.warning("Triage: rules fallback (%s)", config.redact(exc))
+            rationale = " ".join(reply.rationale.split())[:600] or rationale
+            by_crew = {c: " ".join(t.split())[:240] for c, t in reply.by_crew.items() if c in CREW_NAME and t.strip()} or by_crew
+        elif reply is not None:
+            note = "Nemotron answered but returned no usable decisions; the rules decided."
+        log.info("Triage: %s decided %d of %d listed jobs in %.1f s, %d clamped", model, len(proposed), len(ask),
+                 time.perf_counter() - started, clamped)
     order = {i.id: n for n, i in enumerate(sorted(jobs, key=_rank))}
+    final = sorted(decisions.values(), key=lambda d: order[d.issue_id])
+    by_model = sum(d.by == "model" for d in final)
     return Triage(model=model, model_name=model_name, min_severity=min_severity, days=days, rationale=rationale,
-                  by_crew=by_crew, capacity_min=cap, clamped=clamped,
-                  decisions=sorted(decisions.values(), key=lambda d: order[d.issue_id]))
+                  by_crew=by_crew, capacity_min=cap, clamped=clamped, decisions=final, model_decisions=by_model,
+                  rule_decisions=len(final) - by_model, note=note)

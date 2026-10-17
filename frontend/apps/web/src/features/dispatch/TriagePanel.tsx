@@ -21,6 +21,8 @@ export function TriagePanel({ triage, byId, onSelect, routed }: { triage: Triage
     <div className="triage pad-s">
       <div className="comp-h"><h3>Day plan</h3><Chip tone={model ? 'info' : 'neutral'}>{model ? `${model}` : 'Rules (no model)'}</Chip></div>
       <p className="label">Floor S{triage.min_severity}+ · {triage.days} day{triage.days > 1 ? 's' : ''}{model && triage.clamped ? ` · ${triage.clamped} model decision${triage.clamped > 1 ? 's' : ''} kept to the rules` : ''}</p>
+      {triage.model_decisions != null || triage.rule_decisions != null ? <p className="small muted">{model ? `Nemotron decided ${triage.model_decisions ?? 0}` : 'Nemotron decided none'}, rules decided {triage.rule_decisions ?? triage.decisions.length} (severity 5, pinned, below the floor, and anything the model wasn’t asked).</p> : null}
+      {triage.note ? <p className="small rec-caveat"><span>{triage.note}</span></p> : null}
       <RichText className="triage-why" text={triage.rationale} />
       {Object.entries(triage.by_crew).length ? (
         <ul className="triage-crews small">{Object.entries(triage.by_crew).map(([crew, note]) => <li key={crew} data-cat={CATEGORY_FOR_CREW[crew as keyof typeof CATEGORY_FOR_CREW]}><b>{CATEGORY[CATEGORY_FOR_CREW[crew as keyof typeof CATEGORY_FOR_CREW]].crewLabel}</b> {note}</li>)}</ul>

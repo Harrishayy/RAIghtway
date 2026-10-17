@@ -407,6 +407,9 @@ class Triage(BaseModel):
     capacity_min: dict[Crew, int] = {}                # work minutes the crew type's trucks can do per day
     clamped: int = 0                                  # model decisions code overrode
     decisions: list[TriageDecision] = []
+    model_decisions: int = 0                          # final decisions the model made ("Nemotron decided N")
+    rule_decisions: int = 0                           # final decisions a rule made ("rules M")
+    note: str | None = None                           # why the rules decided when a model was asked
 
 
 class PlanDay(BaseModel):

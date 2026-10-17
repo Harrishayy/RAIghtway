@@ -48,10 +48,11 @@ styles/                       tokens.css → components.css → app.css
 
 | Screen (route) | Feature files | Client calls (backend endpoint) |
 |---|---|---|
-| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `run` (`POST /api/run`, the Footage pane's Run button), `searchTopic` (`POST /api/search`, VSS, only when `capabilities.topicSearch`; `pnpm dev:live` and `.env.local` switch it on). The query lives in `state/ui.ts` (`topic`): `FootageSearch` in the Footage pane ranks drives by their matches, and the Timeline draws the open drive's matches as a clickable lane |
+| Review (`/review`; `/` redirects) | `features/review/` (ReviewDesk, FootageList, Player, Timeline, Detections) + `features/issues/IssueCard` + `features/map` | `listVideos`, `getVideo` (`/api/videos[/{id}]`), `similar` (`/api/issues/{id}/similar`), `frameUrl` (`/api/frames/{id}`), `run` (`POST /api/run`, the Footage pane's Run button), `searchTopic` (`POST /api/search`, VSS, only when `capabilities.topicSearch`; `pnpm dev:live` and `.env.local` switch it on). The query lives in `state/ui.ts` (`topic`): `FootageSearch` in the Footage pane ranks drives by their matches, shows Nemotron's answer (else VSS's synthesis) and how many matches are already logged, and the Timeline draws the open drive's matches as a clickable lane (a logged match selects its issue). `ask` (`POST /api/videos/{id}/ask`, `capabilities.ask`): `AskDrive` above the timeline; times in the answer seek the player |
 | Issues | `features/issues/IssuesView` + `IssueCard` | `listIssues` (`/api/issues`), `similar` |
 | Report | `features/report/ReportView` | `getReport` / `regenerateReport` (`/api/report`) |
-| Dispatch | `features/dispatch/DispatchView`, `RoadsPanel` + `features/map` | `dispatch` (`POST /api/dispatch`), `hazards` (`/api/hazards`), `directions` (`POST /api/directions`) |
+| Dispatch | `features/dispatch/` (DispatchView, PlanPanel, ZonePicker, RecommendCard, TriagePanel, RouteList, RoadsPanel, schedule.ts) + `features/map` | `dispatch` (`POST /api/dispatch` with sites, days, floor, triage, zones), `recommend` / `recommendProgress` / `latestRecommendation`, `listZones` / `addZone` / `removeZone`, `listFacilities` / `updateFacility` (trucks per site), `hazards`, `directions`. Shows `cuOpt` vs `Fallback routing`, street vs straight-line times, and who triaged (Nemotron or rules, with counts) |
+| Sites (`/sites`) | `features/sites/SitesView` + `features/map` | `listFacilities`, `addFacility`, `updateFacility`, `removeFacility`, `resetFacilities`, `geocode` (`/api/facilities…`, `/api/geocode`) |
 | Top bar | `layout/TopNav` | tabs and the category filter. The Look picker and the API status button are hidden (see below) |
 
 ## Show the sponsor tech; never fake it
@@ -61,6 +62,7 @@ The demo is judged by VAST, NVIDIA and W&B people, and every backend integration
 - Dispatch prints `cuOpt` or `Fallback routing`, the solve time and `street times` when the matrix came from roads (`Plan.solver`, `solve_ms`, `matrix_source`).
 - The issue card's "Similar issues" label says `VastDB vector search` or `local index` (`Similar.search`), and each row shows its embedding distance.
 - Footage search is VSS only: the summary line carries a `VSS` tag, and a failed search says "VSS search is unavailable" with Retry. There is no local fallback to label.
+- Answers say who wrote them: the search answer is labelled "Nemotron, from VSS matches and logged issues" or "VSS summary"; Ask shows `Nemotron` or `VSS` with the evidence count; a drive summary Nemotron didn't write carries a `template` tag in the footage list.
 
 Keep these signals when you redesign a screen. Never label a fallback as the sponsor service, and never draw invented data on a real backend.
 

@@ -6,7 +6,8 @@ import { CATEGORY, clamp, fmtClock, issueLabel, type CategoryId, type Issue, typ
 import { usePlayback } from '@/state/playback';
 import { useSize } from '@/lib/useSize';
 import { Icon } from '@/ui/Icon';
-import { useFootageSearch } from './FootageSearch';
+import { AskDrive } from './AskDrive';
+import { loggedIn, useFootageSearch } from './FootageSearch';
 
 export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[]; cats: CategoryId[] }) {
   const dur = Math.max(1, video.duration_s);
@@ -30,6 +31,7 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
   };
   return (
     <div className="tl">
+      <AskDrive key={video.id} video={video} issues={issues} />
       <div className="tl-ruler" ref={ruler} aria-hidden="true">{ticks.map(s => <span key={s} style={{ left: `${(s / dur) * 100}%` }}>{fmtClock(s)}</span>)}</div>
       <div className="tl-lanes" onPointerDown={scrub}>
         {cats.map(c => {
@@ -47,8 +49,11 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
         {query.length > 2 && (
           <div className="lane lane-vss">
             <span className="lane-l" title={topic.isError ? 'VSS search unavailable' : `VSS search “${query}”: ${hits.length} matches on this drive`}><Icon name={topic.isError ? 'alert' : 'search'} /><span className="ll">“{query}”</span><b>{topic.isError ? '!' : topic.isFetching && !all ? '…' : hits.length}</b></span>
-            <span className="lane-t" data-seek>{hits.map((h, i) => <button key={i} type="button" className="band" style={{ left: `${(h.start / dur) * 100}%`, width: `${(Math.max(h.end - h.start, 1) / dur) * 100}%`, opacity: 0.45 + h.score * 0.55 }}
-              aria-label={`VSS match ${fmtClock(h.start)} to ${fmtClock(h.end)}: ${h.caption}`} title={`${fmtClock(h.start)}–${fmtClock(h.end)} · ${h.caption}`} onClick={() => { setPlaying(false); seek(h.start); }} />)}</span>
+            <span className="lane-t" data-seek>{hits.map((h, i) => { const logged = loggedIn(h, issues); const note = logged.length ? ` · logged: ${issueLabel(logged[0]!)}${logged.length > 1 ? ` +${logged.length - 1}` : ''}` : ' · not logged yet'; return (
+              <button key={i} type="button" className={`band${logged.length ? ' logged' : ''}`} style={{ left: `${(h.start / dur) * 100}%`, width: `${(Math.max(h.end - h.start, 1) / dur) * 100}%`, opacity: 0.45 + h.score * 0.55 }}
+                aria-label={`VSS match ${fmtClock(h.start)} to ${fmtClock(h.end)}: ${h.caption}${note}`} title={`${fmtClock(h.start)}–${fmtClock(h.end)} · ${h.caption}${note}`}
+                onClick={() => { setPlaying(false); if (logged[0]) select(logged[0].id); seek(h.start); }} />
+            ); })}</span>
           </div>
         )}
         {speed && (

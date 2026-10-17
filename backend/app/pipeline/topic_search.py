@@ -3,17 +3,17 @@
 VSS returns 5 s segments of the `pie_cam-3` index. Each maps through the inventory
 (segment -> drive, t_start) to a corpus video and a time range on its timeline;
 touching segments on one drive merge into one band. There is no fallback: when VSS
-is down the caller answers 503, so a result here always came from VSS.
+is down the caller answers 503, so a result here always came from VSS. Nemotron then
+answers the search from the bands and the issues already logged inside them
+(app/ai/summaries.py); if it is slow or down the answer is left empty.
 """
 import asyncio
 import logging
 import re
 
-from pydantic import BaseModel
-
 from app import config
 from app.geo import inventory
-from app.models import VideoRecord
+from app.models import IssueRecord, TopicHit, TopicSearch, Video
 from app.pipeline import vss_client
 
 log = logging.getLogger(__name__)
@@ -24,23 +24,6 @@ CAPTION_CHARS = 160
 RELATIVE_FLOOR = 0.6        # drop bands below this share of the best similarity (VSS pads weak queries with noise)
 MIN_SIMILARITY = 0.1        # and below this outright: "flooding" over dry streets scores about 0.04
 MIN_QUERY, MAX_QUERY = 3, 200
-
-
-class TopicHit(BaseModel):
-    video_id: str
-    start: float
-    end: float
-    score: float             # rank within this answer, 1 = best (raw VSS similarities bunch near 0.2)
-    similarity: float        # VSS similarity_score of the band's best segment
-    caption: str
-
-
-class TopicSearch(BaseModel):
-    query: str
-    hits: list[TopicHit]
-    search: str = "vss"      # which index answered; always VSS, there is no fallback
-    synthesis: str = ""      # VSS's LLM answer over the top hits, when it gave one
-    cached: bool = False
 
 
 class SearchUnavailable(Exception):
@@ -78,7 +61,7 @@ def _float(value, default: float = 0.0) -> float:
         return default
 
 
-def map_hits(results: list[dict], videos: dict[str, VideoRecord], query: str = "") -> list[TopicHit]:
+def map_hits(results: list[dict], videos: dict[str, Video], query: str = "") -> list[TopicHit]:
     """VSS segment hits -> merged bands on the given videos, best first. Unmapped and weak hits are dropped."""
     segments = inventory.by_id()
     floor = max(MIN_SIMILARITY, RELATIVE_FLOOR * max((_float(h.get("similarity_score")) for h in results), default=0.0))
@@ -113,8 +96,25 @@ def map_hits(results: list[dict], videos: dict[str, VideoRecord], query: str = "
                      caption=b["caption"]) for i, b in enumerate(merged)]
 
 
-async def search(query: str, videos: dict[str, VideoRecord]) -> TopicSearch:
-    """Ask VSS, map its hits onto `videos`. ValueError on a bad query, SearchUnavailable if VSS can't answer."""
+LOGGED_SLACK_S = 2.0        # an issue this close to a band counts as logged there
+
+
+def logged_in(hits: list[TopicHit], issues: list[IssueRecord]) -> dict[int, list[str]]:
+    """For each band (by index), the labels of the issues already logged inside it."""
+    by_video: dict[str, list[IssueRecord]] = {}
+    for i in issues:
+        by_video.setdefault(i.video_id, []).append(i)
+    out = {}
+    for k, h in enumerate(hits):
+        inside = [i for i in by_video.get(h.video_id, []) if h.start - LOGGED_SLACK_S <= i.t <= h.end + LOGGED_SLACK_S]
+        if inside:
+            out[k] = [f"{i.category} severity {i.severity}: {(i.name or '').strip() or i.description}"
+                      for i in sorted(inside, key=lambda i: -i.severity)[:3]]
+    return out
+
+
+async def search(query: str, videos: dict[str, Video], logged: list[IssueRecord] = ()) -> TopicSearch:
+    """Ask VSS, map its hits onto `videos`, then let Nemotron answer. ValueError on a bad query, SearchUnavailable if VSS can't answer."""
     q = normalise(query)
     # The thread keeps running after a timeout and fills the cache, so a retry is instant.
     job = asyncio.ensure_future(asyncio.to_thread(vss_client.search_full, q, top_k=TOP_K, llm_top_n=LLM_TOP_N))
@@ -127,6 +127,14 @@ async def search(query: str, videos: dict[str, VideoRecord]) -> TopicSearch:
         log.warning("VSS search %r failed (%s)", q, config.redact(exc))
         raise SearchUnavailable("VSS search is unavailable") from None
     hits = map_hits(answer["results"], videos, q)
-    log.info("VSS topic search %r: %d segments -> %d bands%s", q, len(answer["results"]), len(hits),
-             " (cached)" if answer.get("cached") else "")
-    return TopicSearch(query=q, hits=hits, synthesis=answer.get("synthesis", ""), cached=bool(answer.get("cached")))
+    inside = logged_in(hits, list(logged))
+    try:   # the answer is an extra: a missing or broken summaries module leaves it empty
+        from app.ai import summaries
+        reply = await summaries.search_answer(q, hits, inside, videos)
+    except Exception as exc:
+        log.warning("Search answer unavailable (%s)", config.redact(exc))
+        reply = ""
+    log.info("VSS topic search %r: %d segments -> %d bands, %d logged%s; answer %s", q, len(answer["results"]),
+             len(hits), len(inside), " (cached)" if answer.get("cached") else "", "nemotron" if reply else "none")
+    return TopicSearch(query=q, hits=hits, synthesis=answer.get("synthesis", ""), answer=reply,
+                       answer_source="nemotron" if reply else None, logged=len(inside), cached=bool(answer.get("cached")))

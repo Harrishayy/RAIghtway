@@ -36,8 +36,10 @@ app/pipeline/          piece.py (one 5 s piece → Detections) · dedupe.py (in-
                        segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py ·
                        manual.py (operator-marked issues, pins, names and operator grades: overlay rows, never deduped)
 app/geo/               gps.py (PIE 1 Hz GPS) · inventory.py (segment → drive, t) · demo.py · roads.py (OSRM) · distance.py
-app/planning/          dispatch.py (per-category bases → one cuOpt solve) · cuopt.py · report.py · hazards.py
-                       (city closures + dashcam work zones) · paths.py (detours) · facilities.py/.json
+app/planning/          dispatch.py (sites → triage → multi-day cuOpt round trips) · triage.py (Nemotron day plan) ·
+                       recommend.py (Nemotron + cuOpt workforce scenarios) · zones.py/zones_wards.json (wards, drawn
+                       areas) · cuopt.py · report.py · hazards.py (city closures + dashcam work zones) · paths.py
+                       (detours) · facilities.py/.json (21 City sites; edits in state/facilities.json)
 tests/                 pytest, offline
 ../scripts/            one-off jobs, run from backend/ with the VM venv (see "Scripts")
 ```
@@ -55,9 +57,10 @@ Each integration has a fallback so the demo never stops. The flip side is that a
 | **VastDB vector search** | `vast/vector.py` | dedupe (category + 35 m box) and similar issues | in-memory numpy cosine for 60 s after any ADBC error | log `vector.nearest path=adbc`; the similar-issues API returns `search: "vastdb"` and the issue card shows it |
 | **VAST S3** | `vast/media.py`, `pipeline/run.py` | keyframes (`citymaint/frames/`), uploaded originals; Run downloads its segments from here | `MEDIA_MODE=vastdb` (frames table) | frame served when the disk cache is empty |
 | **VSS API** (VAST DataEngine index) | `pipeline/vss_client.py`, `pipeline/topic_search.py` | `POST /api/search` (the console's footage search, mapped onto drives via the inventory); semantic search hits that widen the precompute sample; clip download; `scripts/build_inventory.py` reads `vss-collection` | none for `/api/search` (503); precompute extras skipped | `/api/search` returns `search: "vss"`; log `VSS topic search '…': N segments -> M bands`. Warm demo queries with `scripts/warm_vss.py` |
-| **Nemotron on W&B Inference** | `ai/nemotron.py` | work orders (Lightning), report (Ultra, then Lightning), box fallback (Super-VL) | template work orders / report | Weave trace `nemotron_json` with the text prompt and parsed reply |
+| **Nemotron on W&B Inference** | `ai/nemotron.py`, `ai/summaries.py`, `pipeline/ask.py` | work orders (Lightning), report (Ultra, then Lightning), box fallback (Super-VL); grounded, checked drive summaries; the answer to a footage search; "Ask about this drive" over VSS captions | template work orders / report; a fact-built summary marked `explanation_source: "template"`; no search answer (VSS synthesis shown); Ask quotes the nearest VSS caption (`source: "vss"`) | Weave trace `nemotron_json` with the text prompt and parsed reply (schema `DriveSummary`, `SearchAnswer`, `AskReply`); `/api/videos` `explanation_source`; logs `Drive summary for …: nemotron`, `Ask … -> nemotron`. Lightning reasons for 750+ tokens before answering, so keep `chat_json`'s 4096-token budget |
 | **W&B Weave** | `ai/weave_setup.py`, `scripts/weave_eval.py` | tracing every model op; Evaluations of work orders and Cosmos find | tracing off | the W&B project `$WANDB_TEAM/$WANDB_PROJECT` |
-| **cuOpt** (hosted, build.nvidia.com) | `planning/cuopt.py` | one routing solve over a road travel-time matrix | nearest-neighbour per crew | `Plan.solver == "cuopt"`, log `Dispatch: … solver=cuopt`; Dispatch shows it |
+| **cuOpt** (hosted, build.nvidia.com) | `planning/cuopt.py`, `dispatch.py`, `recommend.py` | round trips from each site per day (vehicle breaks = lunch, S5 time windows), and every recommendation scenario | nearest-neighbour per site (lunch reserved) | `Plan.solver == "cuopt"`, `Route.solver`, `ScenarioMetrics.solver`; log `Dispatch: … solver=cuopt`; Dispatch shows it |
+| **Nemotron triage / recommendation** | `planning/triage.py`, `recommend.py` | today / later / defer per job; propose and pick workforce scenarios | rules (`Triage.model == "rules"` with `note`; `Recommendation.proposer/picker == "rules"`) | log `Triage: nemotron-ultra decided N of M`; `Triage.model_decisions`; Weave ops `triage_with_model`, `recommend_propose`, `scenario_solved`, `recommend_pick` |
 
 Gate checks on the VM exercise each of these: `python -m app.ai.gatecheck --help`, `python -m app.vast.gatecheck --help`, `python -m app.planning.cuopt --toy`.
 

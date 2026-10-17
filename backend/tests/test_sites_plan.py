@@ -386,3 +386,29 @@ def test_recommend_model_pick_is_validated_and_cuopt_fallback_is_named(backlog, 
     rec = asyncio.run(recommend.recommend(days=1, min_severity=3))
     assert rec.picker == "nemotron" and rec.recommended == rec.scenarios[-1].id
     assert rec.rationale.startswith("Covers the S5 job")
+
+
+def test_triage_with_no_usable_model_decisions_is_labelled_rules(monkeypatch):
+    jobs = [issue("h", severity=5), issue("a", severity=4, lat=43.70), issue("b", lat=43.71), issue("c", lat=43.72)]
+    asked = []
+
+    async def empty(facts):                    # the deploy-1 failure: a valid reply with no decisions
+        asked.append([j["id"] for j in facts["jobs"]])
+        return {"rationale": "Everything fits.", "decisions": [{"issue_id": "made-up", "decision": "today", "reason": "x"}]}
+    monkeypatch.setattr(triage, "triage_with_model", empty)
+    t = asyncio.run(triage.decide(jobs, 3, {"roads": 2}, 1))
+    assert t.model == "rules" and t.model_name is None and "no usable decisions" in t.note
+    assert t.model_decisions == 0 and t.rule_decisions == 4
+    assert len(asked) == 2 and "h" not in asked[0]                     # S5 is fixed by rule, never asked
+    assert set(asked[1]) <= set(asked[0])                              # the retry is a smaller batch
+
+    async def partial(facts):                  # first reply covers 1 of 3, the retry fills in
+        ids = [j["id"] for j in facts["jobs"]]
+        picks = ids[:1] if len(asked) == 2 else ids
+        asked.append(ids)
+        return {"rationale": "Lane hazards first.", "decisions": [{"issue_id": i, "decision": "today", "reason": "busy road"} for i in picks]}
+    monkeypatch.setattr(triage, "triage_with_model", partial)
+    t = asyncio.run(triage.decide(jobs, 3, {"roads": 2}, 1))
+    assert t.model == "nemotron-ultra" and t.note is None and len(asked) == 4
+    assert t.model_decisions == sum(d.by == "model" for d in t.decisions) >= 2
+    assert t.rule_decisions == len(t.decisions) - t.model_decisions

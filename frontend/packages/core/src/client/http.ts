@@ -7,6 +7,8 @@ import { ApiError, type Capabilities, type RaightwayClient, type UploadOptions }
 export interface Endpoints {
   videos: string; video: string; issues: string; similar: string; frame: string;
   report: string; regenerateReport: string; dispatch: string; upload: string; run: string; search: string;
+  /** POST: ask about one drive. */
+  ask: string;
   hazards: string; directions: string;
   /** POST: an operator-marked issue. */
   createIssue: string;
@@ -19,7 +21,7 @@ export interface Endpoints {
 }
 export const DEFAULT_ENDPOINTS: Endpoints = {
   videos: '/api/videos', video: '/api/videos/{id}', issues: '/api/issues', similar: '/api/issues/{id}/similar',
-  frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch',
+  frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch', ask: '/api/videos/{id}/ask',
   upload: '/api/videos', run: '/api/run', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
   createIssue: '/api/issues', updateIssue: '/api/issues/{id}',
   facilities: '/api/facilities', facility: '/api/facilities/{id}', facilitiesReset: '/api/facilities/reset', geocode: '/api/geocode',
@@ -97,7 +99,7 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
   };
   const withVideoUrl = (v: Video): Video => (ep.videoFile && !v.video_url ? { ...v, video_url: url(ep.videoFile, v.id) } : v);
 
-  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: false, frames: true, directions: true, markIssues: true, sites: true, recommend: true, zones: true, ...config.capabilities };
+  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, ask: true, frames: true, directions: true, markIssues: true, sites: true, recommend: true, zones: true, ...config.capabilities };
   return {
     id: 'http', label: config.label ?? 'API', capabilities: caps,
     async listVideos(signal) { const raw = (tx.videos ?? (x => x))(await request('GET', url(ep.videos), { signal })); return parse.videos((Array.isArray(raw) ? raw : []).map(normVideo)).map(withVideoUrl); },
@@ -155,6 +157,14 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     async searchTopic(query, signal) {
       if (!caps.topicSearch) return [];
       return parse.topicHits((tx.search ?? (x => x))(await request('POST', url(ep.search), { json: { query }, signal })));
+    },
+    // VSS (serialised, cached) then Nemotron's answer: allow more than the default timeout on a cold query.
+    async searchFootage(query, signal) {
+      if (!caps.topicSearch) return { query, hits: [] };
+      return parse.topicSearch((tx.search ?? (x => x))(await request('POST', url(ep.search), { json: { query }, signal, timeoutMs: Math.max(timeout, 30_000) })), query);
+    },
+    async ask(videoId, question, t, signal) {
+      return parse.askAnswer(await request('POST', url(ep.ask, videoId), { json: { question, t: t ?? null }, signal, timeoutMs: Math.max(timeout, 45_000) }));
     },
     // Waits on ffmpeg, GPS, Nemotron and Cosmos-Embed1 on the backend (each best effort), so allow the slow timeout.
     async createIssue(input) { return parse.issue((tx.issue ?? (x => x))(await request('POST', url(ep.createIssue), { json: input, timeoutMs: slowTimeout }))); },

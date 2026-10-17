@@ -3,6 +3,7 @@
 // screen is built and demoed against it, and switching to the API is configuration.
 import type { Facility, Issue, LatLon, Recommendation, Zone, ReportIssue, ReportPayload, StageId, TopicHit, Video, WorkOrder } from '../types';
 import { CATEGORY, CREW_FOR, STAGES } from '../registry';
+import { fmtClock } from '../format';
 import type { Capabilities, RaightwayClient } from '../client/types';
 import { buildWorld, scriptedClip, type MockWorld } from './fixtures';
 import { buildReport, planRoutes } from './planner';
@@ -92,7 +93,7 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
   }
 
   const depot = { lat: 43.6502, lon: -79.3627, label: 'Assumed depot, Front St E at Parliament St' };
-  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, frames: false, directions: false, markIssues: true, sites: true, recommend: true, zones: true, ...opts.capabilities };
+  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, ask: true, frames: false, directions: false, markIssues: true, sites: true, recommend: true, zones: true, ...opts.capabilities };
   let sites: Facility[] = structuredClone(MOCK_SITES);
   // the City's 25 wards (the backend's bundled file), plus areas drawn in this session
   const wards: Zone[] = wardsDoc.zones.map(z => ({ id: z.id, label: z.label, kind: 'ward' as const, code: z.code, polygons: z.polygons as LatLon[][], source: wardsDoc.source, source_url: wardsDoc.source_url }));
@@ -201,6 +202,20 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
         }
       }
       return wait(hits.sort((a, b) => b.score - a.score).slice(0, 200), signal);
+    },
+    async searchFootage(query, signal) {
+      const hits = await this.searchTopic(query, signal);   // method call on the client object: `this` is the client
+      const drives = new Set(hits.map(h => h.video_id)).size;
+      return { query, hits, search: 'vss', logged: hits.length, synthesis: hits.length ? `Sample footage shows ${hits[0]!.caption.toLowerCase()}.` : `Nothing matching “${query}” is visible in the sample footage.`,
+        answer: hits.length ? `“${query}” appears at ${hits.length} moments on ${drives} sample drive${drives === 1 ? '' : 's'}. All of them are already logged as issues.` : '', answer_source: hits.length ? 'nemotron' : null };
+    },
+    async ask(videoId, question, t, signal) {
+      const v = allVideos().find(x => x.id === videoId); if (!v) throw new Error('Video not found');
+      const near = world.issues.filter(i => i.video_id === videoId).sort((a, b) => Math.abs(a.t - (t ?? 0)) - Math.abs(b.t - (t ?? 0))).slice(0, 3);
+      const first = near[0];
+      return wait({ question, source: 'nemotron' as const, times: near.map(i => Math.round(i.t)), issue_ids: near.map(i => i.id),
+        evidence: near.map(i => ({ start: Math.max(0, i.t - 2.5), end: i.t + 2.5, caption: `Sample caption: ${i.description}.`, kind: 'segment' as const })),
+        answer: first ? `Sample answer: near ${fmtClock(first.t)} the footage shows ${first.description.toLowerCase()}${near[1] ? `, and at ${fmtClock(near[1].t)} ${near[1].description.toLowerCase()}` : ''}.` : 'Sample answer: nothing is logged on this drive.' }, signal);
     },
     async createIssue(input) {
       await new Promise(r => setTimeout(r, 700 + latency));        // the backend grabs a frame and asks Nemotron

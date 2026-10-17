@@ -159,3 +159,63 @@ def test_endpoint_answers_on_listed_videos(monkeypatch, segments):
     with pytest.raises(HTTPException) as err:
         asyncio.run(main.search_footage(main.SearchRequest(query="cracked road")))
     assert (err.value.status_code, err.value.detail) == (503, "VSS search is unavailable")
+
+
+def test_logged_issues_inside_bands_feed_the_answer(monkeypatch, segments):
+    from app.ai import summaries
+    from app.models import IssueRecord
+    made = []
+
+    async def answer(q, hits, logged, videos):
+        made.append(logged)
+        return "Cracks on set01 at 00:20; already logged."
+    monkeypatch.setattr(summaries, "search_answer", answer)
+    monkeypatch.setattr(vss_client, "search_full", lambda q, **k: {"results": [hit("a1"), hit("a9")], "synthesis": "", "cached": True})
+    logged = [IssueRecord(id="i1", video_id="corpus-set01-video_0001", t=26.0, category="pavement", severity=4, confidence=0.9,
+                          description="Deep crack", frame_url="", bbox=None, lat=None, lon=None, source="corpus",
+                          frame_key="", created_at=datetime.now(timezone.utc))]
+    out = asyncio.run(topic_search.search("cracked road", listed(video("set01/video_0001")), logged))
+    assert made == [{0: ["pavement severity 4: Deep crack"]}]        # 26 s is within 2 s of the 20-25 s band
+    assert (out.logged, out.answer_source, out.answer) == (1, "nemotron", "Cracks on set01 at 00:20; already logged.")
+
+    async def silent(*a):
+        return ""
+    monkeypatch.setattr(summaries, "search_answer", silent)
+    out = asyncio.run(topic_search.search("cracked road", listed(video("set01/video_0001"))))
+    assert (out.answer, out.answer_source, len(out.hits)) == ("", None, 2)
+
+
+def test_ask_route_codes(monkeypatch):
+    from fastapi import HTTPException
+    from app import main, store
+    from app.models import AskAnswer
+    from app.pipeline import ask
+    monkeypatch.setattr(store, "get_video", lambda id: video("set01/video_0001") if id == "v" else None)
+    monkeypatch.setattr(store, "issues_for_video", lambda id: [])
+
+    async def answer(v, q, t, issues):
+        if q == "down":
+            raise ask.AskUnavailable("Neither VSS nor Nemotron could answer right now")
+        return AskAnswer(question=ask.normalise(q), answer="Cones at 08:50.", source="nemotron", times=[530.0])
+    monkeypatch.setattr(ask, "ask", answer)
+    assert asyncio.run(main.ask_video("v", main.AskRequest(question="what happened", t=530))).times == [530.0]
+    for id, q, code in [("missing", "what happened", 404), ("v", "down", 503)]:
+        with pytest.raises(HTTPException) as err:
+            asyncio.run(main.ask_video(id, main.AskRequest(question=q)))
+        assert err.value.status_code == code
+
+
+def test_videos_serve_the_summary_overlay(monkeypatch, tmp_path):
+    from app import main, store
+    from app.ai import summaries
+    monkeypatch.setattr(summaries.config, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(summaries, "_overlay", None)
+    template = video("set01/video_0001").model_copy(update={"explanation": "This video contains 3 recorded maintenance findings: 3 pavement."})
+    monkeypatch.setattr(store, "list_videos", lambda: [template])
+    assert main.videos()[0].explanation_source == "template"
+    summaries.save(template.id, "Three pavement findings on Bathurst St by 01:53.", "nemotron")
+    served = main.videos()[0]
+    assert (served.explanation, served.explanation_source) == ("Three pavement findings on Bathurst St by 01:53.", "nemotron")
+    started = []
+    monkeypatch.setattr(summaries, "start", lambda ids, only: started.append((ids, only)) or {"running": True})
+    assert asyncio.run(main.regenerate_explanations(None)) == {"running": True} and started == [(None, True)]

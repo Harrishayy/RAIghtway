@@ -22,6 +22,7 @@ from app import config, curation, store
 from app.models import (CREW_FOR, BBox, Category, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Recommendation, Zone,
                         Report, Route,
                         SimilarIssue, Video, VideoRecord)
+from app.models import AskAnswer
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -176,7 +177,12 @@ app = FastAPI(title="City Maintenance", lifespan=lifespan)
 
 
 def _video(record: VideoRecord) -> Video:
-    return Video.model_validate(record.model_dump(include=set(Video.model_fields)))
+    video = Video.model_validate(record.model_dump(include=set(Video.model_fields)))
+    try:   # regenerated drive summaries live in an overlay (app/ai/summaries.py); also labels template text
+        return importlib.import_module("app.ai.summaries").apply(video)
+    except Exception as exc:
+        log.debug("Summary overlay skipped (%s)", config.redact(exc))
+        return video
 
 
 def _issue(record: IssueRecord) -> Issue:
@@ -391,10 +397,33 @@ async def search_footage(body: SearchRequest):
         log.warning("Footage search unavailable (%s)", config.redact(exc))
         raise HTTPException(503, "VSS search is unavailable") from None
     try:
-        return await topic_search.search(body.query, {v.id: v for v in videos()})
+        logged = [i for i in curation.visible(store.all_issues()) if i.verdict != "rejected"]
+        return await topic_search.search(body.query, {v.id: v for v in videos()}, logged)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except topic_search.SearchUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+class AskRequest(BaseModel):
+    question: str
+    t: Annotated[float, Field(ge=0)] | None = None              # the playhead; None asks about the whole drive
+
+
+@app.post("/api/videos/{id}/ask", response_model=AskAnswer)
+async def ask_video(id: str, body: AskRequest):
+    """Ask what happened on a drive: VSS captions as evidence, Nemotron answers (VSS quote if it can't). 503 if neither."""
+    video = _require_video(id)
+    try:
+        ask = importlib.import_module("app.pipeline.ask")
+    except Exception as exc:
+        log.warning("Ask unavailable (%s)", config.redact(exc))
+        raise HTTPException(503, "Ask is unavailable") from None
+    try:
+        return await ask.ask(video, body.question, body.t, curation.visible(store.issues_for_video(id)))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except ask.AskUnavailable as exc:
         raise HTTPException(503, str(exc)) from None
 
 
@@ -708,6 +737,32 @@ async def precompute_status():
     except Exception as exc:
         log.warning("Precompute status failed (%s)", config.redact(exc))
         raise HTTPException(503, "Precompute unavailable") from None
+
+
+class RegenerateRequest(BaseModel):
+    video_ids: list[str] | None = None        # default: every corpus drive
+    only_template: bool = True                # skip drives that already have a Nemotron summary
+
+
+@app.post("/api/admin/explanations/regenerate")
+async def regenerate_explanations(body: RegenerateRequest | None = None):
+    """Admin only. Rewrite drive summaries with grounded Nemotron, one drive at a time (Weave-traced); returns at once."""
+    body = body or RegenerateRequest()
+    try:
+        summaries = importlib.import_module("app.ai.summaries")
+    except Exception as exc:
+        log.warning("Summaries unavailable (%s)", config.redact(exc))
+        raise HTTPException(503, "Summaries unavailable") from None
+    return summaries.start(body.video_ids, body.only_template)
+
+
+@app.get("/api/admin/explanations/status")
+async def explanations_status():
+    try:
+        return importlib.import_module("app.ai.summaries").status()
+    except Exception as exc:
+        log.warning("Summaries unavailable (%s)", config.redact(exc))
+        raise HTTPException(503, "Summaries unavailable") from None
 
 
 @app.post("/api/admin/reset")
