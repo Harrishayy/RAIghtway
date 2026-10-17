@@ -1,0 +1,141 @@
+{
+  "action": "cuOpt_OptimizedRouting",
+  "data": {
+    "cost_matrix_data": {
+      "data": {
+        "0": [
+          [
+            0,
+            5,
+            8,
+            12
+          ],
+          [
+            5,
+            0,
+            4,
+            9
+          ],
+          [
+            8,
+            4,
+            0,
+            6
+          ],
+          [
+            12,
+            9,
+            6,
+            0
+          ]
+        ]
+      }
+    },
+    "travel_time_matrix_data": {
+      "data": {
+        "0": [
+          [
+            0,
+            5,
+            8,
+            12
+          ],
+          [
+            5,
+            0,
+            4,
+            9
+          ],
+          [
+            8,
+            4,
+            0,
+            6
+          ],
+          [
+            12,
+            9,
+            6,
+            0
+          ]
+        ]
+      }
+    },
+    "fleet_data": {
+      "vehicle_locations": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "vehicle_ids": [
+        "roads-1",
+        "graffiti-1"
+      ],
+      "vehicle_time_windows": [
+        [
+          0,
+          480
+        ],
+        [
+          0,
+          480
+        ]
+      ]
+    },
+    "task_data": {
+      "task_locations": [
+        1,
+        2,
+        3
+      ],
+      "task_ids": [
+        "toy-pothole",
+        "toy-crack",
+        "toy-tag"
+      ],
+      "service_times": [
+        60,
+        60,
+        30
+      ],
+      "order_vehicle_match": [
+        {
+          "order_id": 0,
+          "vehicle_ids": [
+            0
+          ]
+        },
+        {
+          "order_id": 1,
+          "vehicle_ids": [
+            0
+          ]
+        },
+        {
+          "order_id": 2,
+          "vehicle_ids": [
+            1
+          ]
+        }
+      ],
+      "prizes": [
+        1000,
+        250,
+        500
+      ]
+    },
+    "solver_config": {
+      "time_limit": 3,
+      "objectives": {
+        "cost": 1,
+        "prize": 1
+      }
+    }
+  },
+  "client_version": ""
+}
