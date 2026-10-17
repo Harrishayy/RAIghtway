@@ -6,12 +6,13 @@ The Raightway operator console. pnpm workspace: `apps/web` (Next.js 16, React 19
 
 ```bash
 pnpm install
-pnpm dev                 # :3000 on sample data (no backend needed)
+pnpm dev                 # :3000 against the backend (RAIGHTWAY_API_URL in apps/web/.env.local)
+pnpm dev:mock            # :3000 on built-in sample data (no backend needed)
 pnpm check               # typecheck + lint + test, all packages; must pass before you finish
 pnpm --filter @raightway/core test       # core unit tests only
 ```
 
-To run against a backend, see "Connect a backend" in `README.md`. In short: `apps/web/.env.local` with `NEXT_PUBLIC_DATA_SOURCE=http` and `RAIGHTWAY_API_URL=…`, then restart dev.
+Real backend is the default; sample data is opt-in. Never draw invented footage on a real backend (Frame `placeholder="blank"`). To configure the backend, see "Connect a backend" in `README.md`. In short: `apps/web/.env.local` with `NEXT_PUBLIC_DATA_SOURCE=http` and `RAIGHTWAY_API_URL=…`, then restart dev.
 
 Next 16 has breaking changes from older versions. `apps/web/AGENTS.md` (written by `next dev`) says to read `apps/web/node_modules/next/dist/docs/` before using an unfamiliar Next API. Do that rather than relying on memory.
 
@@ -85,4 +86,8 @@ styles/                       tokens.css → components.css → app.css
 - `NEXT_PUBLIC_*` env vars are inlined at build/dev start. Restart after changing them.
 - `state/ui.ts` uses `skipHydration`. Don't read persisted values during SSR. The first render uses defaults, then `DirectionSync` rehydrates.
 - The mock's routes follow the Toronto grid (`packages/core/src/geo/toronto.ts`). Real routes come from cuOpt as `path: [lat, lon][]`.
-- `MapView` projects any lat/lon. The Toronto basemap is optional (`NEXT_PUBLIC_BASEMAP=none` for other cities).
+- **Maps:** `features/map/MapView.tsx` is the only entry point.
+  - It picks `TileMap` (MapLibre, real tiles), or `SchematicMap` (SVG) when tiles or WebGL fail.
+  - Keep both engines in step when you add a map feature: alerts, stops/ETAs, crew positions, animations.
+  - Map colours come from CSS tokens, read at load by `palette()` in TileMap. Never hard-code them.
+  - The MapLibre worker is served from `public/maplibre/`, copied by `scripts/copy-maplibre-worker.mjs` on predev and prebuild.

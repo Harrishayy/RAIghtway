@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @raightway/web dev",
-    "dev:api": "NEXT_PUBLIC_DATA_SOURCE=http pnpm --filter @raightway/web dev",
+    "dev:mock": "NEXT_PUBLIC_DATA_SOURCE=mock pnpm --filter @raightway/web dev",
     "build": "pnpm --filter @raightway/web build",
     "start": "pnpm --filter @raightway/web start",
     "typecheck": "pnpm -r typecheck",

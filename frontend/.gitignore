@@ -8,3 +8,4 @@ coverage
 .DS_Store
 tooling/artifacts/out
 next-env.d.ts
+apps/web/public/maplibre/

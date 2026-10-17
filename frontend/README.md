@@ -2,7 +2,7 @@
 
 The operator console for Raightway: review fleet dashcam footage, see every finding at its exact timestamp and on the map, read the report, and dispatch crews.
 
-It runs **on built-in sample data by default**, so you can work on it without the backend. Pointing it at the real API is configuration only, with no code changes (see [Connect a backend](#connect-a-backend)).
+It talks to **the real backend by default** (FastAPI, `architecture.md` §5) through `RAIGHTWAY_API_URL`. For UI work without a backend, `pnpm dev:mock` runs it on a built-in sample city instead. Switching is configuration only (see [Connect a backend](#connect-a-backend)).
 
 ```
 frontend/
@@ -20,7 +20,9 @@ You need **Node 22+** and **pnpm 10** (pnpm comes with Node through corepack).
 cd frontend
 corepack enable              # once per machine; provides the pinned pnpm
 pnpm install
-pnpm dev                     # http://localhost:3000, on sample data
+cp apps/web/.env.example apps/web/.env.local   # then set RAIGHTWAY_API_URL
+pnpm dev                     # http://localhost:3000, real backend
+pnpm dev:mock                # or: built-in sample data, no backend needed
 ```
 
 Open <http://localhost:3000>. You should see the **Review** desk with seven Toronto drives.
@@ -33,8 +35,8 @@ Open <http://localhost:3000>. You should see the **Review** desk with seven Toro
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Dev server on sample data |
-| `pnpm dev:api` | Dev server against the API (set `RAIGHTWAY_API_URL` first) |
+| `pnpm dev` | Dev server against the backend (`RAIGHTWAY_API_URL` in `.env.local`) |
+| `pnpm dev:mock` | Dev server on built-in sample data |
 | `pnpm build` / `pnpm start` | Production build / serve it |
 | `pnpm typecheck` | TypeScript, every package |
 | `pnpm lint` | ESLint, every package |
@@ -75,7 +77,7 @@ All of these are optional. Each has a comment in `.env.example`.
 | `NEXT_PUBLIC_API_TIMEOUT_MS` | Slow endpoints (default 15000) |
 | `NEXT_PUBLIC_POLL_LIVE_MS` / `NEXT_PUBLIC_POLL_IDLE_MS` | Polling while a job runs / when idle (defaults 1000 / 10000) |
 | `NEXT_PUBLIC_DEPOT` | Where crews start: `lat,lon,label` |
-| `NEXT_PUBLIC_BASEMAP` | `toronto` (offline street map) or `none` (plain grid, for other cities) |
+| `NEXT_PUBLIC_BASEMAP` | `tiles` (default: real vector map from CARTO, keyless, falls back to the offline map automatically), `toronto` (offline schematic only) or `none` (plain grid) |
 | `NEXT_PUBLIC_DEFAULT_DIRECTION` | Default look: `survey`, `night` or `paint` |
 
 ### Anything env vars can't express
@@ -167,6 +169,22 @@ packages/core/src/
 The layout adapts to the width each pane actually has, not just the window. Panes keep working from 200 px up and down to phone width.
 
 ---
+
+## Maps
+
+Every map goes through `features/map/MapView.tsx`, which has one set of props for every screen.
+- **Tile engine (`TileMap.tsx`):** MapLibre GL over CARTO vector tiles, light, dark or Voyager to match the look.
+  - Alerts are glyph markers per issue type (pothole, garbage, road block, graffiti, markings, sign) coloured by severity.
+  - Pins cluster when zoomed out, and hazards pulse.
+  - Hovering a pin shows an alert card; clicking selects it.
+- **Fallback engine (`SchematicMap.tsx`):** dependency-free SVG with the same alerts and animations. It is used automatically if WebGL or the tiles are unavailable, and an "Offline map" badge shows.
+- **Overlay:** an alert bar (counts per type, plus a button that steps through hazards) and a Key.
+- **Dispatch is map-first:**
+  - Crews and routes live in a collapsible panel.
+  - After planning, a shift clock (08:00–16:00) plays the day: crews move along their routes and stops tick off.
+  - Each stop shows its ETA, drive time and time on site.
+  - All of it is derived from the backend's `Plan` (`stops`, `eta_min`, `path`) and work-order minutes, so a real cuOpt plan drops straight in.
+- **The MapLibre worker** is copied to `apps/web/public/maplibre/` by `scripts/copy-maplibre-worker.mjs`, which runs automatically before `dev` and `build`.
 
 ## Design directions
 

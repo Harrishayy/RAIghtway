@@ -1,13 +1,22 @@
 'use client';
-// A dependency-free vector map for any city: projects lat/lon onto a local plane, fits whatever it is
-// asked to focus on, and draws an optional offline basemap underneath. Pins and labels keep a constant
-// on-screen size at any pane width; labels that would collide or leave the frame are dropped.
-import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
-import { CATEGORY, boundsOf, centroid, fitBounds, makeProjector, torontoBasemap, type CategoryId, type Issue, type LatLon } from '@raightway/core';
+// One map API for every screen. Uses real vector tiles (TileMap) when they load, and falls back to the
+// offline schematic (SchematicMap) if WebGL or the tile service is unavailable, so the demo never shows
+// an empty box. Adds the alert bar (counts per issue type, hazards you can step through) and a legend.
+import dynamic from 'next/dynamic';
+import { memo, useMemo, useState, type ReactNode } from 'react';
+import { CATEGORIES, SEVERITY, type CategoryId, type Issue, type LatLon } from '@raightway/core';
 import { env } from '@/config/env';
-import { hit, useSize } from '@/lib/useSize';
+import { ALERT_NOUN, GLYPH } from './glyphs';
+import SchematicMap from './SchematicMap';
 
-export interface MapRoute { id: string; category: CategoryId; path: LatLon[]; dim?: boolean }
+export interface MapStop { at: LatLon; n: number; eta: string; done?: boolean }
+export interface MapRoute {
+  id: string; category: CategoryId; path: LatLon[]; dim?: boolean;
+  /** Numbered stops with ETAs, drawn on the route. */
+  stops?: MapStop[];
+  /** Where the crew is now. Omit to animate a crew dot along the route. */
+  at?: LatLon | null;
+}
 export interface MapViewProps {
   issues: Issue[];
   /** Issues from the focused drive draw full strength; others are dimmed. */
@@ -22,76 +31,60 @@ export interface MapViewProps {
   depot?: { lat: number; lon: number; label: string } | null;
   /** What to fit in view. Defaults to the track, else every pin. */
   focus?: LatLon[];
-  label: string;
   /** Smallest span to show, in metres, so a single pin isn't zoomed to street level. */
   minSpan?: number;
+  /** Map rotation in degrees; Toronto's grid reads square at -17. */
+  bearing?: number;
+  label: string;
   overlay?: ReactNode;
+  /** Hide the alert bar (e.g. when the screen already lists alerts). */
+  quiet?: boolean;
   className?: string;
 }
 
-const pts = (a: Array<[number, number]>) => a.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-const path = (a: Array<[number, number]>) => a.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('');
+const TileMap = dynamic(() => import('./TileMap'), { ssr: false, loading: () => <div className="tilemap loading" aria-hidden="true" /> });
 
-function MapViewImpl({ issues, emphasise, selectedId, onSelect, track = [], travelled = 0, vehicle, routes = [], depot, focus, label, minSpan = 500, overlay, className }: MapViewProps) {
-  const box = useRef<HTMLDivElement>(null); const svg = useRef<SVGSVGElement>(null);
-  const { width, height } = useSize(box);
-  const base = env.basemap === 'toronto' ? torontoBasemap() : null;
-  const located = useMemo(() => issues.filter(i => i.lat != null && i.lon != null), [issues]);
-  const all = useMemo<LatLon[]>(() => [...track, ...located.map(i => [i.lat!, i.lon!] as LatLon), ...routes.flatMap(r => r.path)], [track, located, routes]);
-  const proj = useMemo(() => { const c = all.length ? centroid(all) : [43.6532, -79.3832] as LatLon; return makeProjector(c[0], c[1], base?.rotationDeg ?? 0); }, [all, base]);
-
-  const bw = Math.max(1, width), bh = Math.max(1, height);
-  const target = focus?.length ? focus : track.length ? track : all;
-  const b = boundsOf(target.map(p => proj(p[0], p[1])));
-  const [x0, y0, w, h] = b ? fitBounds(b, bw / bh, 0.12, minSpan) : [-500, -350, 1000, 700];
-  const k = bw / w; const fs = 10.5 / k, pr = 5 / k;
-  const P = (p: LatLon) => proj(p[0], p[1]);
-  const trackXY = track.map(P);
-  const cut = Math.max(1, Math.round(travelled * (trackXY.length - 1)) + 1);
-
-  // drop labels that collide with each other or the overlay, or leave the frame
-  useLayoutEffect(() => {
-    const s = svg.current; if (!s) return; const sr = s.getBoundingClientRect(); if (!sr.width) return;
-    const blocked = [...(box.current?.querySelectorAll('.map-overlay > *') ?? [])].map(e => e.getBoundingClientRect());
-    s.querySelectorAll<SVGTextElement>('.m-label').forEach(t => {
-      t.style.display = ''; const r = t.getBoundingClientRect();
-      const inside = r.left >= sr.left + 4 && r.right <= sr.right - 4 && r.top >= sr.top + 4 && r.bottom <= sr.bottom - 4;
-      if (!inside || blocked.some(o => hit(o, r, 4))) { t.style.display = 'none'; return; }
-      blocked.push(r);
-    });
-  });
+function MapViewImpl(props: MapViewProps) {
+  const [failed, setFailed] = useState(false);
+  const [legend, setLegend] = useState(false);
+  const [hzIdx, setHzIdx] = useState(-1);
+  const useTiles = env.basemap === 'tiles' && !failed;
+  const shown = useMemo(() => props.issues.filter(i => !props.emphasise || props.emphasise(i)), [props]);
+  const counts = useMemo(() => CATEGORIES.map(c => ({ id: c.id, n: shown.filter(i => i.category === c.id).length })).filter(c => c.n), [shown]);
+  const hazards = useMemo(() => shown.filter(i => i.severity === 5 && i.lat != null).sort((a, b) => b.confidence - a.confidence), [shown]);
+  const hz = hzIdx >= 0 ? hazards[hzIdx % Math.max(1, hazards.length)] : undefined;
+  const focus: LatLon[] | undefined = hz ? [[hz.lat!, hz.lon!]] : props.focus;
+  const nextHazard = () => { const k = (hzIdx + 1) % Math.max(1, hazards.length); setHzIdx(k); const h = hazards[k]; if (h) props.onSelect?.(h); };
+  const engineProps = { ...props, focus, minSpan: hz ? 700 : props.minSpan, bearing: props.bearing ?? (env.basemap !== 'none' ? -17 : 0) };
 
   return (
-    <div ref={box} className={`mapbox${className ? ` ${className}` : ''}`}>
-      {width > 0 && (
-        <svg ref={svg} viewBox={`${x0} ${y0} ${w} ${h}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={label}>
-          <rect x={x0} y={y0} width={w} height={h} className="m-ground" />
-          {base && <>
-            {base.water.map((poly, i) => <polygon key={`w${i}`} className="m-water" points={pts(poly.map(P))} />)}
-            {base.parks.map((poly, i) => <polygon key={`p${i}`} className="m-park" points={pts(poly.map(P))} />)}
-            {base.streets.filter(s => s.kind === 'street').map(s => <path key={s.name} className="m-st" d={path(s.line.map(P))} />)}
-            {base.streets.filter(s => s.kind === 'arterial').map(s => <path key={`c${s.name}`} className="m-art-c" d={path(s.line.map(P))} />)}
-            {base.streets.filter(s => s.kind === 'arterial').map(s => <path key={`a${s.name}`} className="m-art" d={path(s.line.map(P))} />)}
-            <g>{base.labels.map((l, i) => { const [x, y] = P(l.at); return <text key={i} className="m-label" x={x} y={y} fontSize={fs} textAnchor="middle" dy={-fs * 0.55} transform={l.vertical ? `rotate(-90 ${x} ${y})` : undefined}>{l.text}</text>; })}</g>
-          </>}
-          {!base && <g className="m-grid">{Array.from({ length: 9 }, (_, i) => <path key={i} d={`M${x0 + (w * i) / 8} ${y0}V${y0 + h}M${x0} ${y0 + (h * i) / 8}H${x0 + w}`} />)}</g>}
-          {routes.map(r => <path key={r.id} className={`m-route${r.dim ? ' dim' : ''}`} data-cat={r.category} d={path(r.path.map(P))} />)}
-          {trackXY.length > 1 && <><path className="m-track-dim" d={path(trackXY)} /><path className="m-track" d={path(trackXY.slice(0, cut))} /></>}
-          {depot && (() => { const [x, y] = P([depot.lat, depot.lon]); return <g className="m-depot" transform={`translate(${x} ${y})`}><rect x={-pr * 1.3} y={-pr * 1.3} width={pr * 2.6} height={pr * 2.6} /><title>{depot.label}</title></g>; })()}
-          {located.map(i => {
-            const [x, y] = P([i.lat!, i.lon!]); const em = emphasise ? emphasise(i) : true;
-            return (
-              <g key={i.id} className={`m-pin${em ? '' : ' dim'}${i.id === selectedId ? ' sel' : ''}${i.provisional ? ' prov' : ''}`} data-sev={i.severity}
-                role={onSelect ? 'button' : undefined} tabIndex={onSelect && em ? 0 : -1} aria-label={`${CATEGORY[i.category].label}, severity ${i.severity}${i.place ? `, ${i.place}` : ''}`}
-                onClick={onSelect ? () => onSelect(i) : undefined} onKeyDown={onSelect ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(i); } } : undefined}>
-                <circle cx={x} cy={y} r={em ? pr : pr * 0.7} />
-              </g>
-            );
-          })}
-          {vehicle && (() => { const [x, y] = P(vehicle.at); const rot = vehicle.heading + proj.rotationDeg; return <g className="m-car" transform={`translate(${x} ${y}) rotate(${rot})`}><circle r={pr * 2.6} /><path d={`M0 ${-pr * 1.5}L${pr * 1.05} ${pr * 1.2}L0 ${pr * 0.55}L${-pr * 1.05} ${pr * 1.2}Z`} /></g>; })()}
-        </svg>
+    <div className={`mapbox${props.className ? ` ${props.className}` : ''}`}>
+      {useTiles ? <TileMap {...engineProps} onFail={() => setFailed(true)} /> : <SchematicMap {...engineProps} />}
+      <div className="map-overlay">
+        {!props.quiet && (counts.length > 0 || hazards.length > 0) && (
+          <div className="map-alerts" role="group" aria-label="Alerts on the map">
+            {hazards.length > 0 && (
+              <button type="button" className="map-chip hz" onClick={nextHazard} title="Step through safety hazards">
+                <span className="pulse" aria-hidden="true" />{hazards.length} hazard{hazards.length > 1 ? 's' : ''}{hz ? <span className="muted"> · {(hzIdx % hazards.length) + 1}/{hazards.length}</span> : null}
+              </button>
+            )}
+            {counts.map(c => (
+              <span key={c.id} className="map-chip" data-cat={c.id} title={`${ALERT_NOUN[c.id]}: ${c.n}`}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d={GLYPH[c.id]} /></svg><span className="num">{c.n}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {props.overlay}
+      </div>
+      <button type="button" className="map-legend-btn" aria-expanded={legend} onClick={() => setLegend(l => !l)}>{legend ? 'Hide key' : 'Key'}</button>
+      {legend && (
+        <div className="map-legend" role="note" aria-label="Map key">
+          <ul>{CATEGORIES.map(c => <li key={c.id} data-cat={c.id}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={GLYPH[c.id]} /></svg>{ALERT_NOUN[c.id]}</li>)}</ul>
+          <div className="map-legend-sev">{SEVERITY.map(s => <span key={s.level} title={s.label}><i className="sev-dot" data-sev={s.level}>{s.level}</i>{s.when}</span>)}</div>
+        </div>
       )}
-      {overlay ? <div className="map-overlay">{overlay}</div> : null}
+      {!useTiles && env.basemap === 'tiles' ? <span className="map-offline" title="Map tiles are unavailable; showing the offline map">Offline map</span> : null}
     </div>
   );
 }

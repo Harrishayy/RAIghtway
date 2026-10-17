@@ -11,7 +11,8 @@ const int = (raw: string | undefined, d: number) => { const n = Number(raw); ret
 
 const depotRaw = process.env.NEXT_PUBLIC_DEPOT?.split(',');
 export const env = {
-  dataSource: (process.env.NEXT_PUBLIC_DATA_SOURCE === 'http' || process.env.NEXT_PUBLIC_DATA_SOURCE === 'api' ? 'http' : 'mock') as 'http' | 'mock',
+  /** http (default): the real backend. mock: built-in sample city, for UI work without a backend. */
+  dataSource: (process.env.NEXT_PUBLIC_DATA_SOURCE === 'mock' ? 'mock' : 'http') as 'http' | 'mock',
   apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? '',
   endpoints: json<Endpoints>(process.env.NEXT_PUBLIC_API_ENDPOINTS, 'NEXT_PUBLIC_API_ENDPOINTS'),
   capabilities: json<Capabilities>(process.env.NEXT_PUBLIC_API_CAPABILITIES, 'NEXT_PUBLIC_API_CAPABILITIES'),
@@ -20,6 +21,7 @@ export const env = {
   pollIdleMs: int(process.env.NEXT_PUBLIC_POLL_IDLE_MS, 10000),
   depot: depotRaw && depotRaw.length >= 2 && depotRaw.slice(0, 2).every(x => Number.isFinite(Number(x)))
     ? { lat: Number(depotRaw[0]), lon: Number(depotRaw[1]), label: depotRaw.slice(2).join(',').trim() || 'Depot' } : undefined,
-  basemap: (process.env.NEXT_PUBLIC_BASEMAP === 'none' ? 'none' : 'toronto') as 'toronto' | 'none',
+  /** tiles: real vector map (needs internet), falls back to the offline schematic. toronto: schematic only. none: plain grid. */
+  basemap: (['toronto', 'none'].includes(process.env.NEXT_PUBLIC_BASEMAP ?? '') ? process.env.NEXT_PUBLIC_BASEMAP : 'tiles') as 'tiles' | 'toronto' | 'none',
   defaultDirection: (['survey', 'night', 'paint'].includes(process.env.NEXT_PUBLIC_DEFAULT_DIRECTION ?? '') ? process.env.NEXT_PUBLIC_DEFAULT_DIRECTION : 'survey') as Direction,
 };

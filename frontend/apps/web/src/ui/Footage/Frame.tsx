@@ -22,10 +22,14 @@ export interface FrameProps {
   hud?: { tl?: ReactNode; bl?: ReactNode; br?: ReactNode };
   /** 0..1 zoom drift that suggests forward motion on the placeholder. */
   drift?: number;
+  /** scene: draw a stand-in street (sample data only). blank: a neutral panel; real backends never get invented footage. */
+  placeholder?: 'scene' | 'blank';
+  /** Shown on the blank panel. */
+  emptyLabel?: string;
   className?: string;
 }
 
-export function Frame({ issue, seed, src, video, hud, drift = 0, className }: FrameProps) {
+export function Frame({ issue, seed, src, video, hud, drift = 0, placeholder = 'scene', emptyLabel, className }: FrameProps) {
   const box = useRef<HTMLDivElement>(null); const canvas = useRef<HTMLCanvasElement>(null);
   const tag = useRef<HTMLSpanElement>(null); const mark = useRef<HTMLDivElement>(null);
   const { width } = useSize(box); const dir = useUi(s => s.direction);
@@ -35,12 +39,12 @@ export function Frame({ issue, seed, src, video, hud, drift = 0, className }: Fr
 
   // draw the placeholder when the scene, size or source changes
   useEffect(() => {
-    const c = canvas.current; if (!c || showImg || video || !width) return;
+    const c = canvas.current; if (!c || showImg || video || !width || placeholder === 'blank') return;
     const dpr = Math.min(2, window.devicePixelRatio || 1); const W = Math.max(320, Math.round(width * dpr)); const H = Math.round((W * 9) / 16);
     c.width = W; c.height = H; const ctx = c.getContext('2d'); if (!ctx) return;
     const s = issue?.frame_seed ?? seed;
     drawScene(ctx, W, H, issue ? { category: issue.category, seed: s, bbox: issue.bbox, light: LIGHT[s % 7] } : { seed: s, light: LIGHT[s % 7] });
-  }, [issue, seed, width, showImg, video]);
+  }, [issue, seed, width, showImg, video, placeholder]);
 
   // keep the tag in the frame and off the HUD
   useLayoutEffect(() => {
@@ -61,11 +65,13 @@ export function Frame({ issue, seed, src, video, hud, drift = 0, className }: Fr
     <div ref={box} className={`frame${className ? ` ${className}` : ''}`}>
       {video ?? (showImg
         ? <img src={src!} alt={issue ? `${CATEGORY[issue.category].label}: ${issue.description}` : 'Dashcam frame'} onError={() => setFailed(src ?? null)} />
-        : <canvas ref={canvas} aria-hidden="true" style={{ transform: `scale(${(1 + drift * 0.05).toFixed(4)})` }} />)}
+        : placeholder === 'blank'
+          ? <div className="frame-empty"><span>{src && failed === src ? 'Frame unavailable' : emptyLabel ?? 'No frame'}</span></div>
+          : <canvas ref={canvas} aria-hidden="true" style={{ transform: `scale(${(1 + drift * 0.05).toFixed(4)})` }} />)}
       {hud?.tl ? <div className="hud h-tl">{hud.tl}</div> : null}
       {hud?.bl ? <div className="hud h-bl">{hud.bl}</div> : null}
       {hud?.br ? <div className="hud h-br">{hud.br}</div> : null}
-      {issue && b ? (
+      {issue && b && (showImg || placeholder === 'scene' || video) ? (
         <div ref={mark} className={`mark${issue.provisional ? ' provisional' : ''}`} style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%` }}>
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path className="ring" pathLength={400} d={dir === 'survey' ? RING.survey : RING.box} /></svg>
           <span ref={tag} className="tag">{CATEGORY[issue.category].label} · S{issue.severity} · {Math.round(issue.confidence * 100)}%</span>
