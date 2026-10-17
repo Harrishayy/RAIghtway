@@ -185,26 +185,31 @@ def _numpy_nearest(embedding, *, category=None, bbox=None, source="corpus",
             if np.isfinite(distances[index])]
 
 
-def nearest(embedding: list[float], *, category: str | None = None,
-            bbox: tuple[float, float, float, float] | None = None,
-            source: str | None = "corpus", canonical_only: bool = True,
-            exclude_id: str | None = None, k: int = 5) -> list[tuple[str, float]]:
+def search(embedding: list[float], *, category: str | None = None,
+           bbox: tuple[float, float, float, float] | None = None,
+           source: str | None = "corpus", canonical_only: bool = True,
+           exclude_id: str | None = None, k: int = 5) -> tuple[list[tuple[str, float]], str]:
+    """Nearest issues and the path that answered: "adbc" (VastDB), "numpy" (in-memory) or "empty"."""
     try:
         query = _vector(embedding)
         k = int(k)
         if k <= 0 or not np.any(query):
             log.info("vector.nearest path=empty hits=0")
-            return []
+            return [], "empty"
         options = dict(category=category, bbox=_bounds(bbox), source=source,
                        canonical_only=canonical_only, exclude_id=exclude_id, k=k)
         try:
             result = _adbc_query(_build_sql(query, **options))
             log.info("vector.nearest path=adbc hits=%d", len(result))
-            return result
+            return result, "adbc"
         except Exception:
             result = _numpy_nearest(query, **options)
             log.info("vector.nearest path=numpy hits=%d", len(result))
-            return result
+            return result, "numpy"
     except Exception:
         log.warning("vector.nearest path=empty search unavailable or input invalid")
-        return []
+        return [], "empty"
+
+
+def nearest(embedding: list[float], **options) -> list[tuple[str, float]]:
+    return search(embedding, **options)[0]

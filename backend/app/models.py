@@ -46,6 +46,11 @@ class Issue(BaseModel):
     work_order: WorkOrder | None = None               # canonical issues only
 
 
+class SimilarIssue(Issue):                            # GET /api/issues/{id}/similar
+    distance: float | None = None                     # cosine distance, 0 = identical
+    search: Literal["vastdb", "local"]                # which index answered: VastDB ADBC or the numpy fallback
+
+
 class Video(BaseModel):
     id: str
     filename: str

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app import config, store
 from app.models import (CREW_FOR, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Report, Route,
-                        Video, VideoRecord)
+                        SimilarIssue, Video, VideoRecord)
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -277,19 +277,21 @@ def issues():
     return [_issue(i) for i in store.canonical_issues()]
 
 
-@app.get("/api/issues/{id}/similar", response_model=list[Issue])
+@app.get("/api/issues/{id}/similar", response_model=list[SimilarIssue])
 def similar_issues(id: str):
     issue = _require_issue(id)
     if not issue.embedding:
         return []
     try:
         vector = importlib.import_module("app.vast.vector")
-        matches = vector.nearest(issue.embedding, source=None, exclude_id=id, k=5)
+        matches, path = vector.search(issue.embedding, source=None, exclude_id=id, k=5)
     except Exception as exc:
         log.warning("Similar search unavailable (%s)", config.redact(exc))
         return []
     canonical = {i.id: i for i in store.canonical_issues()}
-    return [_issue(canonical[match_id]) for match_id, _ in matches if match_id in canonical and match_id != id][:5]
+    search = "vastdb" if path == "adbc" else "local"
+    return [SimilarIssue(**_issue(canonical[match_id]).model_dump(), distance=round(distance, 4), search=search)
+            for match_id, distance in matches if match_id in canonical and match_id != id][:5]
 
 
 @app.get("/api/frames/{issue_id}")

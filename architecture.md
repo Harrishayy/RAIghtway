@@ -262,6 +262,8 @@ class Route(BaseModel):     crew_id: str; crew: Crew; stops: list[str]; eta_min:
 class Plan(BaseModel):      routes: list[Route]; unassigned: list[str]; solver: Literal["cuopt","fallback"]; solve_ms: int
     # optional extras: unassigned_reasons, facilities: list[Facility], hazards: list[Hazard], matrix_source
     # solver is "fallback" whenever cuOpt failed; the console shows it, so a fallback is never passed off as cuOpt
+class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0 = identical
+                            search: Literal["vastdb","local"] # VastDB ADBC answered, or the in-memory numpy fallback
 # Facility, Hazard, RouteWarning and Directions: see backend/app/models.py (dispatch and road alerts)
 ```
 
@@ -272,7 +274,7 @@ class Plan(BaseModel):      routes: list[Route]; unassigned: list[str]; solver: 
 | `GET /api/videos` | `Video[]`, including live progress and stage (polled) |
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |
-| `GET /api/issues/{id}/similar` | `Issue[]` for the issue panel (VastDB vector search) |
+| `GET /api/issues/{id}/similar` | `SimilarIssue[]` (top 5) for the issue panel: VastDB vector search, with `distance` and which index answered (`search`) |
 | `GET /api/frames/{issue_id}` | JPEG, from the VM disk cache, else VAST S3 (or the `frames` table in the fallback) |
 | `GET /api/report` | Latest `Report` (instant) |
 | `POST /api/report` | Regenerates the report → `Report` |

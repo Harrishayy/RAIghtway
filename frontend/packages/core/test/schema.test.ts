@@ -27,3 +27,15 @@ describe('parse', () => {
     expect(parse.similar([i])[0]!.distance).toBeNull(); // the FastAPI backend sends plain Issue[]
   });
 });
+
+describe('similar issues', () => {
+  const issue = { id: 'b', video_id: 'v', t: 1, category: 'graffiti', severity: 3, confidence: 1, description: 'tag', frame_url: '', bbox: null, lat: null, lon: null };
+  it('keeps distance and the index that answered', () => {
+    expect(parse.similar([{ ...issue, distance: 0.12, search: 'vastdb' }])).toMatchObject([{ issue: { id: 'b' }, distance: 0.12, search: 'vastdb' }]);
+  });
+  it('drops an unknown index name and tolerates plain issues', () => {
+    const [hit] = parse.similar([{ ...issue, search: 'pinecone' }]);
+    expect(hit.distance).toBeNull();
+    expect(hit.search).toBeUndefined();
+  });
+});

@@ -161,5 +161,6 @@ export interface Topic { id: string; query: string; hits: TopicHit[]; pending?: 
 
 export interface Depot { lat: number; lon: number; label: string }
 export type CrewCounts = Partial<Record<CrewType, number>>;
-/** `distance` is null when the backend returns plain issues (the FastAPI backend does). */
-export interface Similar { issue: Issue; distance: number | null }
+/** A vector-search neighbour. `distance` is cosine distance (0 = identical), null when the backend omits it.
+ * `search` says which index answered: `vastdb` (VastDB ADBC) or `local` (the backend's in-memory fallback). */
+export interface Similar { issue: Issue; distance: number | null; search?: 'vastdb' | 'local' }

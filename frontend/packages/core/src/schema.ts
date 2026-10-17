@@ -116,7 +116,8 @@ export const parse = {
     const o = x as Record<string, unknown>;
     const r = IssueSchema.safeParse(o && 'issue' in o ? o.issue : o);
     const d = Number(o?.distance ?? o?.score ?? NaN);
-    return r.success ? [{ issue: r.data as Issue, distance: Number.isFinite(d) ? d : null }] : [];
+    const search = o?.search === 'vastdb' || o?.search === 'local' ? o.search : undefined;
+    return r.success ? [{ issue: r.data as Issue, distance: Number.isFinite(d) ? d : null, ...(search ? { search } : {}) }] : [];
   }),
   topicHits: (raw: unknown): TopicHit[] => {
     const o = raw as Record<string, unknown> | unknown[];
