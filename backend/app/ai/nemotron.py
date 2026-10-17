@@ -32,6 +32,18 @@ def _get_client() -> AsyncOpenAI:
     return _client
 
 
+def _traceable(messages: list[dict]) -> list[dict]:
+    """Messages for the Weave trace: text kept, base64 images and video replaced by a marker."""
+    out = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [part if part.get("type") == "text" else {"type": part.get("type"), "omitted": "media"}
+                       for part in content if isinstance(part, dict)]
+        out.append({**message, "content": content})
+    return out
+
+
 async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
                     timeout: float | None = None) -> BaseModel:
     """Validate JSON, retry once; timeout bounds both attempts together."""
@@ -41,9 +53,9 @@ async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
         *messages,
     ]
 
-    # Capture payloads in the closure: the traced arguments contain metadata only.
+    # The request goes from the closure; the traced `messages` is text only, so media never reaches Weave.
     @op
-    async def nemotron_json(model: str, schema_name: str, message_count: int):
+    async def nemotron_json(model: str, schema_name: str, messages: list[dict]):
         for attempt in range(2):
             kwargs = {"model": model, "messages": request_messages,
                       "temperature": 0.2, "max_tokens": 4096}
@@ -69,7 +81,7 @@ async def chat_json(messages, schema: type[BaseModel], model: str = LIGHTNING,
                     "Validation failed: " + error + ". Return corrected JSON only."})
         raise RuntimeError("Nemotron JSON validation failed")
 
-    call = nemotron_json(model, schema.__name__, len(messages))
+    call = nemotron_json(model, schema.__name__, _traceable(request_messages))
     if timeout is not None:
         return await asyncio.wait_for(call, timeout=timeout)
     return await call
