@@ -1,6 +1,6 @@
 // View models derived from the contract. Counts and arithmetic live in code, never in the LLM
 // (architecture §3.7), and the UI and the mock source share these functions.
-import type { CategoryId, CrewCounts, CrewType, Depot, Issue, Plan, Route, Severity } from './types';
+import type { CategoryId, CrewCounts, CrewType, Depot, Issue, LatLon, Plan, Route, Severity } from './types';
 import { CATEGORIES, CATEGORY_FOR_CREW, CREW_FOR, SHIFT_MINUTES } from './registry';
 import { travelMinutes } from './format';
 
@@ -50,11 +50,14 @@ export interface PlanView extends Omit<Plan, 'routes'> {
   depot: Depot;
 }
 
+/** Where a route starts and ends: its own base when the backend sends one, else the shared depot. */
+export const routeHome = (r: Route, depot: Depot): LatLon => r.depot ?? [depot.lat, depot.lon];
+
 /** Adds the timing legs the schedule draws, from stop ETAs and work-order minutes. */
 export function enrichPlan(plan: Plan, issues: Issue[], depot: Depot): PlanView {
   const byId = new Map(issues.map(i => [i.id, i]));
-  const home: [number, number] = [depot.lat, depot.lon];
   const routes: RouteView[] = plan.routes.map(r => {
+    const home = routeHome(r, depot);
     const legs: PlanLeg[] = []; let t = 0; let pos = home;
     r.stops.forEach((id, n) => {
       const iss = byId.get(id); const eta = r.eta_min[n] ?? t; const mins = iss?.work_order?.minutes ?? 30;

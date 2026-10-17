@@ -1,0 +1,26 @@
+[
+  {"id": "ts-commissioners", "label": "Commissioners St. Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.65198, "lon": -79.3393, "address": "400 Commissioners St, M4M 3K2", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-bermondsey", "label": "Bermondsey Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.72204, "lon": -79.31832, "address": "188 Bermondsey Rd, M4A 1Y1", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-ingram", "label": "Ingram Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.70066, "lon": -79.47131, "address": "50 Ingram Dr, M6M 2L6", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-dufferin", "label": "Dufferin Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.76173, "lon": -79.47074, "address": "35 Vanley Cres, M3J 2B7", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-disco", "label": "Disco Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.70065, "lon": -79.6025, "address": "120 Disco Rd, M9W 1M4", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-victoria-park", "label": "Victoria Park Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.80317, "lon": -79.3373, "address": "3350 Victoria Park Ave, M2H 3K5", "source": "City of Toronto Open Data: Transfer Station Locations"},
+  {"id": "ts-scarborough", "label": "Scarborough Transfer Station", "kind": "transfer_station", "crews": ["sanitation"],
+   "lat": 43.79652, "lon": -79.24262, "address": "1 Transfer Pl, M1S 5H8", "source": "City of Toronto Open Data: Transfer Station Locations"},
+
+  {"id": "yard-east", "label": "East works yard (assumed)", "kind": "yard",
+   "crews": ["roads", "graffiti", "markings", "signage", "inspection"],
+   "lat": 43.6608, "lon": -79.3402, "address": "Eastern Ave at Carlaw Ave", "source": "Assumed location", "assumed": true},
+  {"id": "yard-west", "label": "West works yard (assumed)", "kind": "yard",
+   "crews": ["roads", "graffiti", "markings", "signage", "inspection"],
+   "lat": 43.6676, "lon": -79.4398, "address": "Dufferin St at Dupont St", "source": "Assumed location", "assumed": true},
+  {"id": "yard-north", "label": "North works yard (assumed)", "kind": "yard",
+   "crews": ["roads", "graffiti", "markings", "signage", "inspection"],
+   "lat": 43.7340, "lon": -79.4650, "address": "Dufferin St at Wilson Ave", "source": "Assumed location", "assumed": true}
+]

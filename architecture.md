@@ -204,13 +204,23 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 
 ### 3.8 Dispatch (cuOpt)
 - **Hosted API (build.nvidia.com sample):** `POST https://optimize.api.nvidia.com/v1/nvidia/cuopt` with `Authorization: Bearer $NVIDIA_API_KEY` and `Accept: application/json`; body `{"action": "cuOpt_OptimizedRouting", "data": {...}, "client_version": ""}`. A 202 means poll `GET https://optimize.api.nvidia.com/v1/status/{NVCF-REQID}` (from the response header) until it returns 200. Large requests need NVCF's asset upload, so keep to about 100 jobs with integer-minute matrices. The hosted solver is marked non-commercial use only.
-- **One problem for all crews:**
-  - `cost_matrix_data` and `travel_time_matrix_data` are `{"data": {"0": M}}`, where M holds minutes between the depot (index 0) and every job: haversine distance × 1.3 ÷ 25 km/h, rounded.
-  - `fleet_data` has one vehicle per crew: `vehicle_locations` `[[0,0], …]`, `vehicle_ids` (`roads-1`, …), `vehicle_time_windows` `[[0,480], …]`.
-  - `task_data` has `task_locations`, `task_ids`, `service_times` (work-order minutes), `order_vehicle_match` (each job → the crews of its type; copy the exact shape from the sample) and `prizes` (from severity, so the least important jobs drop first when shifts are full).
+- **Categorise, then route each category from its own bases** (`backend/app/planning/`):
+  - The pipeline's structured output is normalised onto the six categories (`prompts.normalise_category`: "pothole" → pavement, "garbage"/"trash" → waste, "construction"/"cones" → work_zone, …), so a model or upstream label that isn't an exact category name is kept rather than dropped.
+  - Each crew type has bases in `facilities.json`. **Sanitation uses the City's seven transfer stations** (Toronto Open Data, *Transfer Station Locations*). Roads (potholes), graffiti, markings, signage and inspection use works yards, which are **assumed points, labelled as such**. Set `FACILITIES_FILE` to swap the list.
+  - Every job is assigned to the nearest base of its crew type. A crew type's vehicles are split across its bases by workload (largest remainder, at least one each). With fewer vehicles than bases in use, the busiest bases stay open and the rest fold into them.
+- **One multi-depot problem per crew type**, solved concurrently, each under the hosted cap of about 100 jobs:
+  - `cost_matrix_data` and `travel_time_matrix_data` are `{"data": {"0": M}}`, where M holds integer driving minutes between the bases in use and the jobs. These come from the OSRM table API (`ROUTING_URL`, default the public demo server), one table per base cluster when there are more than 100 points. The haversine estimate (× 1.3 ÷ 25 km/h) fills in when OSRM is off or unreachable. `Plan.matrix_source` says which was used.
+  - `fleet_data`: `vehicle_locations` `[[b, b], …]` (each vehicle starts and ends at its base), `vehicle_ids` (`sanitation-1`, …) and `vehicle_time_windows` `[[0,480], …]`.
+  - `task_data` has `task_locations`, `task_ids`, `service_times` (work-order minutes), `order_vehicle_match` (each job → **only the vehicles at its nearest base**, so every run stays local) and `prizes` (from severity, so the least important jobs drop first when shifts are full).
   - `solver_config` has `time_limit` about 3 s (the solver uses the whole limit, so this is the demo wait) and `objectives` with a non-zero `prize` weight (prizes are subtracted from the cost; a weight of 0 turns them off).
 - **Expect idle crews:** cuOpt minimises the number of vehicles first by default, so a dispatched crew may get no route. Show "3 of 4 crews needed" rather than forcing `min_vehicles`, which can be infeasible with crew-type matching.
-- **Response:** `response.solver_response.vehicle_data[vehicle_id]` holds parallel lists `task_id`, `route`, `arrival_stamp` and `type`, each becoming a `Route` (stops, ETAs, and a straight-line path depot → stops → depot). `dropped_tasks.task_id` becomes `Plan.unassigned`.
+- **Response:** `response.solver_response.vehicle_data[vehicle_id]` holds parallel lists `task_id`, `route`, `arrival_stamp` and `type`, each becoming a `Route` (stops and ETAs). `Plan.unassigned_reasons` says why each job wasn't routed: no crew of its type, over the cap, or the shift at its base is full.
+- **Road alerts and paths** (`hazards.py`, `paths.py`):
+  - Alerts are the City of Toronto road-restrictions feed (RoDARS open data, cached 15 minutes and on disk) plus canonical `work_zone` issues from our own footage. City rows are kept if they're active today and their schedule overlaps the 08:00–16:00 shift. Severity: closed both ways 5, closed one way 4, construction both ways 3, one lane 2.
+  - Each route's street path comes from OSRM through base → stops → base. A leg that *runs along* a severity ≥ 4 closure (≥ 60 m of overlap; crossing doesn't count) or a severe dashcam work zone is re-asked for alternatives, then for detours through a point a block either side, and the clearest, fastest candidate wins.
+  - `Route.warnings` lists what was avoided and what is still on the way. `Route.maps_urls` holds Google Maps driving links, chained at 10 points. `Route.brief` is a plain-text run sheet to send to the crew.
+  - The public OSRM server allows about one request a second, so calls are serialised, cached and budgeted: street paths go to the busiest routes first (`PATH_SECONDS`) and the rest are straight lines. A self-hosted OSRM (`ROUTING_URL`, `ROUTING_MIN_INTERVAL_S=0`) lifts the budget.
+  - `POST /api/directions` runs the same steering for any origin → destination (the console's Directions tab: base → selected job).
 - **Fallback:** nearest-neighbour routes (highest severity first), labelled in the UI.
 - **Before the event:** send a 3-job toy request with our key.
 
@@ -247,7 +257,12 @@ class Video(BaseModel):
     explanation: str | None = None; issue_ids: list[str] = []; track: list[tuple[float, float]] = []
 class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[str, int]; crews: dict[Crew, int]; rationale: str
 class Route(BaseModel):     crew_id: str; crew: Crew; stops: list[str]; eta_min: list[int]; path: list[tuple[float, float]]
+    # optional extras: facility_id, depot, depot_label, distance_km, path_source ("road"|"straight"),
+    # warnings: list[RouteWarning], maps_urls, brief (plain-text run sheet)
 class Plan(BaseModel):      routes: list[Route]; unassigned: list[str]; solver: Literal["cuopt","fallback"]; solve_ms: int
+    # optional extras: unassigned_reasons, facilities: list[Facility], hazards: list[Hazard], matrix_source
+    # solver is "fallback" whenever cuOpt failed; the console shows it, so a fallback is never passed off as cuOpt
+# Facility, Hazard, RouteWarning and Directions: see backend/app/models.py (dispatch and road alerts)
 ```
 
 ## 5. API
@@ -262,6 +277,10 @@ class Plan(BaseModel):      routes: list[Route]; unassigned: list[str]; solver: 
 | `GET /api/report` | Latest `Report` (instant) |
 | `POST /api/report` | Regenerates the report → `Report` |
 | `POST /api/dispatch` `{crews: {...}}` | `Plan` |
+| `GET /api/facilities` | `Facility[]`: the base each crew type starts from |
+| `GET /api/hazards` | `Hazard[]`: city road restrictions plus dashcam work zones near bases and open jobs |
+| `POST /api/directions` `{origin, destination}` | `Directions`: road path around closures |
+| `GET /api/health` | `{ok, store_source}` |
 | `POST /api/admin/precompute/start`, `/stop`; `POST /api/admin/reset` | Admin only, not in the UI. Reset hides uploads made before it (the cutoff is kept in the local snapshot) |
 
 ---
@@ -306,12 +325,13 @@ The cuOpt toy request is done the night before.
 | Frame + box | Boxes unreliable | Nemotron Super VL on the same frame; otherwise no box |
 | Report | Nemotron slow or invalid JSON | Previous report marked "updating"; one retry, then a template from the counts (work orders: `CREW_FOR` + default minutes) |
 | Dispatch | cuOpt down or key rejected | Nearest-neighbour routes, labelled in the UI |
+| Dispatch | OSRM or the city feed unreachable | Straight-line minutes and paths (`matrix_source`/`path_source` say so); last cached city feed, else dashcam work zones only |
 | Any step | VastDB down at startup; ADBC unavailable; bucket writes trigger ingest | Local snapshot; numpy over `embedding_bin`; keyframes in the VastDB `frames` table and originals on the VM disk |
 | Whole demo | VM, tunnel or venue network drops | Backup video recorded by 15:45 (the submission needs one anyway) |
 
 ## 8. Open questions and decisions
 - Everything marked **Verify on the day** is in the gate checks (section 6).
-- Crew depot location: an assumed point, labelled as such.
+- Crew bases: real City transfer stations for sanitation. Works yards for the other crews are assumed points, labelled as such (`facilities.json`).
 - The final category list, after testing Cosmos on real segments.
 - **For the user to decide:** whether the replay fallback (section 7) is acceptable, provided we say when it's used.
 

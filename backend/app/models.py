@@ -69,12 +69,55 @@ class Report(BaseModel):
     rationale: str
 
 
+class Facility(BaseModel):
+    """Where a crew type starts and ends its shift (a transfer station, a works yard)."""
+    id: str
+    label: str
+    kind: Literal["transfer_station", "yard"]
+    crews: list[Crew]
+    lat: float
+    lon: float
+    address: str | None = None
+    source: str                                       # where the location came from
+    assumed: bool = False                             # true: a stand-in, not a confirmed site
+
+
+class Hazard(BaseModel):
+    """A road that is closed, restricted or busy: a city closure or a work zone seen on camera."""
+    id: str
+    source: Literal["city", "dashcam"]
+    kind: str                                         # e.g. CONSTRUCTION, work_zone
+    label: str
+    lat: float
+    lon: float
+    path: list[tuple[float, float]] = []              # closed stretch, when known
+    severity: int = 3
+    detail: str | None = None
+    until: datetime | None = None
+
+
+class RouteWarning(BaseModel):
+    hazard_id: str
+    label: str
+    source: Literal["city", "dashcam"]
+    avoided: bool                                     # true: the path was re-routed around it
+
+
 class Route(BaseModel):
     crew_id: str
     crew: Crew
     stops: list[str]
     eta_min: list[int]
     path: list[tuple[float, float]]
+    # Optional extras: where the route starts and ends, street geometry, and what to send the crew.
+    facility_id: str | None = None
+    depot: tuple[float, float] | None = None
+    depot_label: str | None = None
+    distance_km: float | None = None
+    path_source: Literal["road", "straight"] = "straight"
+    warnings: list[RouteWarning] = []
+    maps_urls: list[str] = []                         # Google Maps directions, ≤10 points per link
+    brief: str | None = None                          # plain-text run sheet for the crew
 
 
 class Plan(BaseModel):
@@ -82,6 +125,21 @@ class Plan(BaseModel):
     unassigned: list[str]
     solver: Literal["cuopt", "fallback"]
     solve_ms: int
+    unassigned_reasons: dict[str, str] = {}
+    facilities: list[Facility] = []
+    hazards: list[Hazard] = []
+    matrix_source: Literal["road", "straight"] = "straight"
+
+
+class Directions(BaseModel):
+    """Best road path between two points, steering around known hazards."""
+    path: list[tuple[float, float]]
+    minutes: int
+    distance_km: float
+    path_source: Literal["road", "straight"]
+    warnings: list[RouteWarning]
+    alternatives: int                                 # how many candidate paths were compared
+    maps_url: str
 
 
 # ---- Internal records (never sent to the UI) ----

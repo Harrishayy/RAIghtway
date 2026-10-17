@@ -100,11 +100,14 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
         CATS.forEach(c => [1, 2, 3, 4, 5].forEach(s => map!.addImage(`a-${c}-${s}`, alertImage(c, s, p), { pixelRatio: 2 })));
         map.addImage('veh', vehicleImage(p), { pixelRatio: 2 });
         const src = (id: string, extra: Record<string, unknown> = {}) => map!.addSource(id, { type: 'geojson', data: fc(), ...extra });
-        src('track'); src('done'); src('stops'); src('routes', { lineMetrics: true }); src('crews'); src('depot'); src('sel'); src('veh');
+        src('track'); src('done'); src('stops'); src('routes', { lineMetrics: true }); src('crews'); src('depot'); src('sel'); src('veh'); src('ralerts');
         src('issues', { cluster: true, clusterMaxZoom: 14, clusterRadius: 34, clusterProperties: { maxSev: ['max', ['get', 'sev']], hz: ['+', ['get', 'hz']] } });
         const sevColor = ['match', ['get', 'maxSev'], 1, p.sev[0]!, 2, p.sev[1]!, 3, p.sev[2]!, 4, p.sev[3]!, p.sev[4]!] as unknown as string;
         map.addLayer({ id: 'track', type: 'line', source: 'track', paint: { 'line-color': p.ink2, 'line-width': 1.5, 'line-opacity': 0.55, 'line-dasharray': [2, 2] }, layout: { 'line-cap': 'round' } });
         map.addLayer({ id: 'done', type: 'line', source: 'done', paint: { 'line-color': p.accent, 'line-width': 3 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+        // road alerts sit under the routes: closed stretches as thick red bands, the rest as rings
+        map.addLayer({ id: 'ralert-line', type: 'line', source: 'ralerts', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': p.bad, 'line-width': ['case', ['>=', ['get', 'sev'], 4], 6, 4], 'line-opacity': ['case', ['>=', ['get', 'sev'], 4], 0.55, 0.3] }, layout: { 'line-cap': 'round' } });
+        map.addLayer({ id: 'ralert-pt', type: 'circle', source: 'ralerts', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 5, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': p.bad, 'circle-stroke-width': 2, 'circle-stroke-opacity': ['case', ['>=', ['get', 'sev'], 4], 0.9, 0.5] } });
         map.addLayer({ id: 'routes', type: 'line', source: 'routes', paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': ['case', ['==', ['get', 'dim'], 1], 0.12, 0.9] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
         map.addLayer({ id: 'routes-flow', type: 'line', source: 'routes', paint: { 'line-color': p.surface, 'line-width': 1.2, 'line-opacity': 0.85, 'line-dasharray': DASHES[0]! }, layout: { 'line-join': 'round' } });
         map.addLayer({ id: 'depot', type: 'circle', source: 'depot', paint: { 'circle-radius': 6, 'circle-color': p.ink, 'circle-stroke-color': p.surface, 'circle-stroke-width': 2 } });
@@ -128,6 +131,14 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
           map.getCanvas().style.cursor = 'pointer'; popup!.setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number]).setDOMContent(alertCard(i)).addTo(map);
         });
         map.on('mouseleave', 'pins', () => { if (map) map.getCanvas().style.cursor = ''; popup?.remove(); });
+        for (const layer of ['ralert-line', 'ralert-pt']) {
+          map.on('mousemove', layer, (e: MapMouseEvent & { features?: GeoJSON.Feature[] }) => {
+            const label = e.features?.[0]?.properties?.label; if (!label || !map) return;
+            const el = document.createElement('div'); el.className = 'map-alert'; const b = document.createElement('b'); b.textContent = 'Road alert'; const d = document.createElement('p'); d.textContent = String(label); el.append(b, d);
+            popup!.setLngLat(e.lngLat).setDOMContent(el).addTo(map);
+          });
+          map.on('mouseleave', layer, () => popup?.remove());
+        }
         map.on('click', 'pins', (e: MapMouseEvent & { features?: GeoJSON.Feature[] }) => { const i = byId(e.features?.[0]?.properties?.id); if (i) latest.current.onSelect?.(i); });
         map.on('mouseenter', 'clusters', () => { if (map) map.getCanvas().style.cursor = 'zoom-in'; });
         map.on('mouseleave', 'clusters', () => { if (map) map.getCanvas().style.cursor = ''; });
@@ -152,9 +163,10 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
     setData('sel', fc(s && s.lat != null ? [pt(s.lon!, s.lat!)] : []));
   }
   function pushStatic() {
-    const { track = [], depot } = latest.current;
+    const { track = [], depot, depots = [], roadAlerts = [] } = latest.current;
     setData('track', fc(track.length > 1 ? [ln(track.map(p => [p[1], p[0]]))] : []));
-    setData('depot', fc(depot ? [pt(depot.lon, depot.lat)] : []));
+    setData('depot', fc([...(depot ? [depot] : []), ...depots].map(d => pt(d.lon, d.lat, { label: d.label }))));
+    setData('ralerts', fc(roadAlerts.map(a => (a.path && a.path.length > 1 ? ln(a.path.map(q => [q[1], q[0]]), { sev: a.severity, label: a.label }) : pt(a.lon, a.lat, { sev: a.severity, label: a.label })))));
     const p = palette();
     setData('stops', fc((latest.current.routes ?? []).filter(r => !r.dim).flatMap(r => (r.stops ?? []).map(st => pt(st.at[1], st.at[0], { n: st.n, eta: st.eta, done: st.done ? 1 : 0, color: p.cat[r.category] })))));
   }
@@ -179,7 +191,7 @@ export default function TileMap(props: MapViewProps & { onFail: () => void }) {
   }
 
   useEffect(() => { if (ready.current) { pushIssues(); kick(); } }); // cheap: one setData of pins per render
-  useEffect(() => { if (ready.current) pushStatic(); }, [props.track, props.depot, props.routes]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (ready.current) pushStatic(); }, [props.track, props.depot, props.depots, props.roadAlerts, props.routes]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (ready.current) pushPlayhead(); }, [props.travelled, props.vehicle, props.track]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fit(); }); // keyed internally
 

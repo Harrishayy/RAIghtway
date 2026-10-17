@@ -2,7 +2,7 @@
 // Server state. Every screen reads through these hooks; polling speeds up while a job is running and
 // stops when the tab is hidden. Keys are centralised so mutations can invalidate precisely.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CrewCounts, Video } from '@raightway/core';
+import type { CrewCounts, LatLon, Video } from '@raightway/core';
 import { env } from '@/config/env';
 import { toast } from '@/state/toast';
 import { useClient } from './client';
@@ -14,6 +14,7 @@ export const keys = {
   similar: (id: string) => ['similar', id] as const,
   report: ['report'] as const,
   topic: (q: string) => ['topic', q] as const,
+  hazards: ['hazards'] as const,
 };
 const isLive = (v: Video[] | undefined) => Boolean(v?.some(x => x.status === 'queued' || x.status === 'analysing'));
 
@@ -46,6 +47,15 @@ export function useRegenerateReport() {
 export function useDispatch() {
   const c = useClient();
   return useMutation({ mutationFn: (crews: CrewCounts) => c.dispatch(crews), onError: e => toast({ tone: 'bad', title: 'Routing failed', body: (e as Error).message }) });
+}
+/** Road closures and work zones near the work; the city feed changes slowly, so poll rarely. */
+export function useHazards(enabled = true) {
+  const c = useClient();
+  return useQuery({ queryKey: keys.hazards, queryFn: ({ signal }) => c.hazards(signal), enabled: enabled && c.capabilities.directions, staleTime: 5 * 60_000, refetchInterval: 15 * 60_000 });
+}
+export function useDirections() {
+  const c = useClient();
+  return useMutation({ mutationFn: ({ from, to }: { from: LatLon; to: LatLon }) => c.directions(from, to), onError: e => toast({ tone: 'bad', title: 'Directions failed', body: (e as Error).message }) });
 }
 export function useUpload() {
   const c = useClient(); const qc = useQueryClient();

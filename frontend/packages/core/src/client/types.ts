@@ -1,6 +1,6 @@
 // The one seam between the UI and a backend. Screens only ever call these methods, so pointing the
 // console at a different service means writing (or configuring) one adapter, not touching components.
-import type { CrewCounts, Depot, Issue, Plan, ReportPayload, Similar, TopicHit, Video } from '../types';
+import type { CrewCounts, Depot, Directions, Hazard, Issue, LatLon, Plan, ReportPayload, Similar, TopicHit, Video } from '../types';
 
 /** What this backend can do. The UI hides controls for anything switched off. */
 export interface Capabilities {
@@ -12,6 +12,8 @@ export interface Capabilities {
   topicSearch: boolean;
   /** Real JPEG frames at Issue.frame_url. Off: the UI draws a placeholder frame. */
   frames: boolean;
+  /** Road alerts and closure-aware directions (GET /api/hazards, POST /api/directions). */
+  directions: boolean;
 }
 
 export interface UploadOptions { onProgress?: (fraction: number) => void; signal?: AbortSignal }
@@ -28,6 +30,10 @@ export interface RaightwayClient {
   getReport(signal?: AbortSignal): Promise<ReportPayload | null>;
   regenerateReport(): Promise<ReportPayload>;
   dispatch(crews: CrewCounts): Promise<Plan>;
+  /** City road closures and dashcam work zones near the work, worst first. */
+  hazards(signal?: AbortSignal): Promise<Hazard[]>;
+  /** Best road path between two points around current closures. */
+  directions(origin: LatLon, destination: LatLon): Promise<Directions>;
   upload(file: File, opts?: UploadOptions): Promise<Video>;
   searchTopic(query: string, signal?: AbortSignal): Promise<TopicHit[]>;
   /** An <img> src for an issue's frame, or null to draw a placeholder. */

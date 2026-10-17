@@ -17,8 +17,10 @@ from app import config
 log = logging.getLogger(__name__)
 INVOKE_URL = "https://optimize.api.nvidia.com/v1/nvidia/cuopt"
 STATUS_URL = "https://optimize.api.nvidia.com/v1/status/{}"
-TIMEOUT_S = 20.0
+TIMEOUT_S = 35.0          # the hosted service sometimes takes 20 s+ to start a request
 POLL_S = 0.5
+CONCURRENCY = 3            # hosted NVCF queues bursts; more at once made some requests time out
+_slots: asyncio.Semaphore | None = None
 SAMPLE_PATH = Path(__file__).with_name("cuopt_sample.json")
 
 
@@ -58,9 +60,13 @@ async def _solve(payload: dict) -> dict:
 
 
 async def solve(payload: dict) -> dict:
-    """POST one routing problem; returns the solver_response dict. Raises on failure or after 20 s."""
+    """POST one routing problem; returns the solver_response dict. Raises on failure, or TIMEOUT_S after
+    the request gets one of the CONCURRENCY slots."""
+    global _slots
+    _slots = _slots or asyncio.Semaphore(CONCURRENCY)
     try:
-        body = await asyncio.wait_for(_solve(payload), timeout=TIMEOUT_S)
+        async with _slots:
+            body = await asyncio.wait_for(_solve(payload), timeout=TIMEOUT_S)
     except asyncio.TimeoutError:
         raise CuOptError(f"cuOpt timed out after {TIMEOUT_S:.0f} s") from None
     except httpx.HTTPError as exc:

@@ -98,12 +98,41 @@ export interface Report {
 }
 export interface ReportPayload { report: Report; updating: boolean }
 
+/** Where a crew type is based: a City transfer station for sanitation, a works yard for the rest. */
+export interface Facility {
+  id: string; label: string; kind: 'transfer_station' | 'yard'; crews: CrewType[];
+  lat: number; lon: number; address?: string | null; source: string;
+  /** A stand-in location, not a confirmed site. */
+  assumed?: boolean;
+}
+/** A road that is closed, restricted or busy: a City of Toronto restriction or a work zone seen on camera. */
+export interface Hazard {
+  id: string; source: 'city' | 'dashcam'; kind: string; label: string; lat: number; lon: number;
+  /** The affected stretch, when known. */
+  path?: LatLon[];
+  /** 5 road closed both ways · 4 closed one way · 3 construction both ways · 2 one lane. */
+  severity: number;
+  detail?: string | null; until?: string | null;
+}
+export interface RouteWarning { hazard_id: string; label: string; source: 'city' | 'dashcam'; avoided: boolean }
+
 export interface Route {
   crew_id: string;
   crew: CrewType;
   stops: string[];
   eta_min: number[];
   path: LatLon[];
+  /** Backend extras: the route's own base (it starts and ends there), street geometry and what to send the crew. */
+  facility_id?: string | null;
+  depot?: LatLon | null;
+  depot_label?: string | null;
+  distance_km?: number | null;
+  path_source?: 'road' | 'straight';
+  warnings?: RouteWarning[];
+  /** Google Maps driving directions, chained when a route has more stops than one link takes. */
+  maps_urls?: string[];
+  /** Plain-text run sheet to paste into a message to the crew. */
+  brief?: string | null;
 }
 export interface Plan {
   routes: Route[];
@@ -112,6 +141,15 @@ export interface Plan {
   solve_ms: number;
   /** UI extra: why each unassigned job was dropped. */
   unassigned_reasons?: Record<string, string>;
+  /** Backend extras: the bases in use, road alerts near the work, and whether travel times are road or straight-line. */
+  facilities?: Facility[];
+  hazards?: Hazard[];
+  matrix_source?: 'road' | 'straight';
+}
+/** Best road path between two points, steering around closures (POST /api/directions). */
+export interface Directions {
+  path: LatLon[]; minutes: number; distance_km: number; path_source: 'road' | 'straight';
+  warnings: RouteWarning[]; alternatives: number; maps_url: string;
 }
 
 /** One GPS sample at 1 Hz from the PIE vehicle logs (architecture §3.4). `t` is seconds into the video. */

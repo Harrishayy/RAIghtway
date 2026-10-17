@@ -64,7 +64,7 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
   }
 
   const depot = { lat: 43.6502, lon: -79.3627, label: 'Assumed depot, Front St E at Parliament St' };
-  const caps: Capabilities = { upload: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, frames: false, ...opts.capabilities };
+  const caps: Capabilities = { upload: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, frames: false, directions: false, ...opts.capabilities };
   return {
     id: 'mock', label: 'Sample data', capabilities: caps,
     listVideos: signal => wait(allVideos(), signal),
@@ -87,6 +87,8 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
     },
     async regenerateReport() { reportUntil = Date.now() + 2500; await new Promise(r => setTimeout(r, 2500)); report = { report: buildReport(canonical()), updating: false }; return structuredClone(report); },
     async dispatch(crews) { await new Promise(r => setTimeout(r, 900 + latency)); return planRoutes(canonical(), crews, depot); },
+    hazards: signal => wait([], signal),
+    directions: () => Promise.reject(new Error('Directions need the live backend')),
     async upload(file, o = {}) {
       for (let p = 0.2; p <= 1; p += 0.2) { if (o.signal?.aborted) throw new DOMException('Aborted', 'AbortError'); o.onProgress?.(p); await new Promise(r => setTimeout(r, 120)); }
       const u: Upload = { started: Date.now(), clip: scriptedClip(world, uploads.length + 1, file.name || 'clip.mp4') }; uploads.push(u);

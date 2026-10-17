@@ -13,7 +13,7 @@ from pydantic import Field, RootModel
 from app import config
 from app.models import BBox, Detection, FindResult
 from app.ai import gpu, nemotron
-from app.ai.prompts import BOX_PROMPT, CATEGORIES, FIND_PROMPT, _extract_json
+from app.ai.prompts import BOX_PROMPT, FIND_PROMPT, _extract_json, normalise_category
 from app.ai.weave_setup import op
 
 log = logging.getLogger(__name__)
@@ -69,12 +69,14 @@ def _parse_find(raw: str, duration: float) -> FindResult:
     skipped = 0
     for item in parsed["issues"]:
         try:
-            if not isinstance(item, dict) or item.get("category") not in CATEGORIES:
+            category = normalise_category(item.get("category") or item.get("type") or item.get("label"),
+                                          item.get("description", "")) if isinstance(item, dict) else None
+            if category is None:
                 skipped += 1
                 continue
             issues.append(Detection(
-                piece_index=0, t_piece=max(0.0, min(duration, _number(item["t"]))),
-                category=item["category"], severity=max(1, min(5, int(_number(item["severity"])))),
+                piece_index=0, t_piece=max(0.0, min(duration, _number(item.get("t", 0)))),
+                category=category, severity=max(1, min(5, int(_number(item["severity"])))),
                 confidence=max(0.0, min(1.0, _number(item["confidence"]))),
                 description=" ".join(str(item["description"]).split()[:20])))
         except (KeyError, ValueError, TypeError, OverflowError):

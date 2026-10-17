@@ -27,8 +27,10 @@ def _read_env_files(paths) -> dict[str, str]:
 
 def _team_config() -> dict[str, str]:
     path = os.environ.get("TEAM_CONFIG_FILE")
-    # backend/.env (gitignored) holds our own keys, e.g. NVIDIA_API_KEY; it wins over the team file.
-    return _read_env_files([BACKEND_DIR / ".env", *([path] if path else sorted(glob.glob("/config/team-*.config")))])
+    # backend/.env, then the repo-root .env (both gitignored), hold our own keys, e.g. NVIDIA_API_KEY;
+    # they win over the team file.
+    return _read_env_files([BACKEND_DIR / ".env", BACKEND_DIR.parent / ".env",
+                            *([path] if path else sorted(glob.glob("/config/team-*.config")))])
 
 
 def _backend_secret() -> tuple[str | None, dict]:
@@ -95,7 +97,15 @@ WANDB_TEAM = _get("WANDB_TEAM")
 WANDB_PROJECT = _get("WANDB_PROJECT")
 
 # cuOpt (hosted)
-NVIDIA_API_KEY = _get("NVIDIA_API_KEY") or _SECRET.get("nvidia_api_key")
+NVIDIA_API_KEY = _get("NVIDIA_API_KEY") or _get("NVIDIA_NIM_API_KEY") or _SECRET.get("nvidia_api_key")
+
+# Road routing (OSRM) and road restrictions (City of Toronto open data). "off" disables either one;
+# both are public, keyless and fall back to straight lines / dashcam work zones only.
+ROUTING_URL = _get("ROUTING_URL", "https://router.project-osrm.org")
+ROUTING_MIN_INTERVAL_S = _get("ROUTING_MIN_INTERVAL_S")   # default: 1 s on the public server, 0 elsewhere
+ROAD_RESTRICTIONS_URL = _get("ROAD_RESTRICTIONS_URL",
+                             "https://secure.toronto.ca/opendata/cart/road_restrictions/v3?format=json")
+FACILITIES_FILE = _get("FACILITIES_FILE")         # JSON list of Facility; defaults to app/planning/facilities.json
 
 # VSS backend API (zsh reserves USERNAME, so VSS_USERNAME takes precedence)
 INGRESS_URL = _get("INGRESS_URL")

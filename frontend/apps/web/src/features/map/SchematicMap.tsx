@@ -13,7 +13,7 @@ import { GLYPH } from './glyphs';
 const pts = (a: Array<[number, number]>) => a.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
 const path = (a: Array<[number, number]>) => a.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('');
 
-export default function SchematicMap({ issues, emphasise, selectedId, onSelect, track = [], travelled = 0, vehicle, routes = [], depot, focus, label, minSpan = 500 }: MapViewProps) {
+export default function SchematicMap({ issues, emphasise, selectedId, onSelect, track = [], travelled = 0, vehicle, routes = [], depot, depots = [], roadAlerts = [], focus, label, minSpan = 500 }: MapViewProps) {
   const box = useRef<HTMLDivElement>(null); const svg = useRef<SVGSVGElement>(null);
   const { width, height } = useSize(box);
   const base = env.basemap === 'none' ? null : torontoBasemap();
@@ -56,11 +56,14 @@ export default function SchematicMap({ issues, emphasise, selectedId, onSelect, 
             <g>{base.labels.map((l, i) => { const [x, y] = P(l.at); return <text key={i} className="m-label" x={x} y={y} fontSize={fs} textAnchor="middle" dy={-fs * 0.55} transform={l.vertical ? `rotate(-90 ${x} ${y})` : undefined}>{l.text}</text>; })}</g>
           </>}
           {!base && <g className="m-grid">{Array.from({ length: 9 }, (_, i) => <path key={i} d={`M${x0 + (w * i) / 8} ${y0}V${y0 + h}M${x0} ${y0 + (h * i) / 8}H${x0 + w}`} />)}</g>}
+          {roadAlerts.map(a => a.path && a.path.length > 1
+            ? <path key={`ra-${a.id}`} className={`m-ralert${a.severity >= 4 ? ' hard' : ''}`} d={path(a.path.map(P))}><title>{a.label}</title></path>
+            : (() => { const [x, y] = P([a.lat, a.lon]); return <circle key={`ra-${a.id}`} className={`m-ralert-pt${a.severity >= 4 ? ' hard' : ''}`} cx={x} cy={y} r={pr * 1.1}><title>{a.label}</title></circle>; })())}
           {routes.map(r => <path key={`${r.id}:${r.path.length}`} className={`m-route${r.dim ? ' dim' : ''}`} data-cat={r.category} d={path(r.path.map(P))} pathLength={1} />)}
           {routes.filter(r => !r.dim).flatMap(r => (r.stops ?? []).map(st => { const [x, y] = P(st.at); return <g key={`${r.id}-${st.n}`} className={`m-stop${st.done ? ' done' : ''}`} data-cat={r.category} transform={`translate(${x} ${y})`}><circle r={pr * 1.6} /><text fontSize={pr * 1.9} textAnchor="middle" dy={pr * 0.65}>{st.n}</text><title>{`Stop ${st.n} · ETA ${st.eta}`}</title></g>; }))}
           {routes.filter(r => r.at && !r.dim).map(r => { const [x, y] = P(r.at!); return <circle key={`crew-${r.id}`} className="m-crew" data-cat={r.category} cx={x} cy={y} r={pr * 1.1} />; })}
           {trackXY.length > 1 && <><path className="m-track-dim" d={path(trackXY)} /><path className="m-track" d={path(trackXY.slice(0, cut))} /></>}
-          {depot && (() => { const [x, y] = P([depot.lat, depot.lon]); return <g className="m-depot" transform={`translate(${x} ${y})`}><rect x={-pr * 1.3} y={-pr * 1.3} width={pr * 2.6} height={pr * 2.6} /><title>{depot.label}</title></g>; })()}
+          {[...(depot ? [depot] : []), ...depots].map(d => { const [x, y] = P([d.lat, d.lon]); return <g key={`d-${d.label}`} className="m-depot" transform={`translate(${x} ${y})`}><rect x={-pr * 1.3} y={-pr * 1.3} width={pr * 2.6} height={pr * 2.6} /><title>{d.label}</title></g>; })}
           {located.map(i => {
             const [x, y] = P([i.lat!, i.lon!]); const em = emphasise ? emphasise(i) : true;
             return (

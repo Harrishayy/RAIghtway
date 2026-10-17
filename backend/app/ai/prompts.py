@@ -12,6 +12,37 @@ SEVERITY_RUBRIC = """| Severity | Meaning | Urgency | Examples |
 | 3 | Repair this month | soon | pothole forming, faded crosswalk, overflowing bin |
 | 4 | Repair this week | soon | pothole in a traffic lane, hard-to-read sign |
 | 5 | Safety hazard, fix today | urgent | deep pothole, blocked or missing stop sign, unguarded work zone |"""
+# Labels a model (or another pipeline's structured output) uses for our categories, checked in order:
+# the first category with a matching word wins. Category names themselves always match.
+CATEGORY_ALIASES = (
+    ("work_zone", ("work zone", "workzone", "construction", "roadwork", "road work", "traffic cone", "cones",
+                   "barricade", "detour", "excavation", "lane closure", "road closure", "closed lane")),
+    ("pavement", ("pothole", "pot hole", "crack", "pavement", "asphalt", "road surface", "rutting", "sinkhole",
+                  "broken road", "road damage")),
+    ("graffiti", ("graffiti", "tag", "tagging", "vandal", "spray paint", "spray-paint", "mural")),
+    ("waste", ("waste", "garbage", "trash", "litter", "rubbish", "dumping", "dumped", "bin", "debris",
+               "refuse", "junk", "bulky item")),
+    ("markings", ("marking", "lane line", "crosswalk", "crossing", "zebra", "stop line", "road paint")),
+    ("signage", ("sign", "signage", "signpost", "traffic sign")),
+)
+
+
+def normalise_category(label, description: str = "") -> str | None:
+    """Map a free-form label onto one of CATEGORIES; the description breaks ties. None if nothing fits."""
+    text = str(label or "").strip().lower().replace("-", "_")
+    if text in CATEGORIES:
+        return text
+    for haystack in (text.replace("_", " "), str(description or "").lower()):
+        if not haystack:
+            continue
+        words = set(re.findall(r"[a-z]+", haystack))
+        for category, aliases in CATEGORY_ALIASES:
+            if any((alias in haystack) if " " in alias else (alias in words or alias + "s" in words)
+                   for alias in aliases):
+                return category
+    return None
+
+
 DEFAULT_MINUTES = {"pavement": 60, "graffiti": 30, "markings": 45,
                    "work_zone": 30, "signage": 45, "waste": 20}
 

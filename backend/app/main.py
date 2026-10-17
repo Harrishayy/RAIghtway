@@ -15,11 +15,12 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from app import config, store
-from app.models import CREW_FOR, Crew, Issue, IssueRecord, Plan, Report, Route, Video, VideoRecord
+from app.models import (CREW_FOR, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Report, Route,
+                        Video, VideoRecord)
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -141,12 +142,23 @@ def _seed_fixtures() -> None:
     store.seed_memory(videos, issues)
 
 
+async def _warm_road_alerts() -> None:
+    """Fetch the city's road restrictions once at startup, so the first plan doesn't wait on it."""
+    try:
+        await importlib.import_module("app.planning.hazards").city()
+    except Exception as exc:
+        log.warning("Road alerts warm-up failed (%s)", config.redact(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for module, name in (("app.ai.weave_setup", "init"), ("app.vast.db", "ensure_tables"), ("app.store", "load")):
         await asyncio.to_thread(_startup_call, module, name)
     if os.environ.get("DEMO_FIXTURES") == "1":
         await asyncio.to_thread(_seed_fixtures)
+    warm = asyncio.create_task(_warm_road_alerts())
+    _analysis_tasks.add(warm)
+    warm.add_done_callback(_analysis_tasks.discard)
     yield
     tasks = list(_analysis_tasks)
     for task in tasks:
@@ -248,6 +260,18 @@ def video_detail(id: str):
     return VideoDetail(video=_video(video), issues=[_issue(i) for i in store.issues_for_video(id)])
 
 
+@app.get("/api/videos/{id}/file")
+def video_file(id: str):
+    """Playable footage: the upload itself, or a corpus drive's 480p proxy (scripts/build_video_proxies.py)."""
+    video = _require_video(id)
+    if not re.fullmatch(r"[\w-]+", id):
+        raise HTTPException(404, "Video file not found")
+    path = Path(config.STATE_DIR) / ("uploads" if video.source == "upload" else "videos") / f"{id}.mp4"
+    if not path.is_file():
+        raise HTTPException(404, "Video file not available")
+    return FileResponse(path, media_type="video/mp4")  # honours Range, so the player can seek
+
+
 @app.get("/api/issues", response_model=list[Issue])
 def issues():
     return [_issue(i) for i in store.canonical_issues()]
@@ -326,6 +350,41 @@ async def dispatch_crews(request: DispatchRequest):
         result = await _dispatch_plan(request.crews)
     await asyncio.to_thread(store.set_plan, result)
     return result
+
+
+@app.get("/api/facilities", response_model=list[Facility])
+def list_facilities():
+    """Transfer stations and works yards each crew type is based at."""
+    return list(importlib.import_module("app.planning.facilities").load())
+
+
+@app.get("/api/hazards", response_model=list[Hazard])
+async def road_alerts():
+    """City road closures and dashcam work zones near the bases and the open jobs, worst first."""
+    try:
+        facilities = importlib.import_module("app.planning.facilities")
+        hazards = importlib.import_module("app.planning.hazards")
+        points = [(f.lat, f.lon) for f in facilities.load()]
+        points += [(i.lat, i.lon) for i in store.canonical_issues() if i.lat is not None and i.lon is not None]
+        return (await hazards.near(points, radius_km=1.0))[:200]
+    except Exception as exc:
+        log.warning("Road alerts unavailable (%s)", config.redact(exc))
+        return []
+
+
+class DirectionsRequest(BaseModel):
+    origin: tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]
+    destination: tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]
+
+
+@app.post("/api/directions", response_model=Directions)
+async def directions(request: DirectionsRequest):
+    """Best road path between two points around current closures, plus what is still in the way."""
+    try:
+        return await dispatch.directions(request.origin, request.destination)
+    except Exception as exc:
+        log.warning("Directions failed (%s)", config.redact(exc))
+        raise HTTPException(503, "Directions unavailable") from None
 
 
 async def _precompute_action(action: str) -> dict:

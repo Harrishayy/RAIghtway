@@ -17,6 +17,7 @@ export interface MapRoute {
   /** Where the crew is now. Omit to animate a crew dot along the route. */
   at?: LatLon | null;
 }
+export interface MapRoadAlert { id: string; lat: number; lon: number; path?: LatLon[]; severity: number; label: string }
 export interface MapViewProps {
   issues: Issue[];
   /** Issues from the focused drive draw full strength; others are dimmed. */
@@ -29,6 +30,10 @@ export interface MapViewProps {
   vehicle?: { at: LatLon; heading: number } | null;
   routes?: MapRoute[];
   depot?: { lat: number; lon: number; label: string } | null;
+  /** More bases (transfer stations, works yards), drawn like the depot. */
+  depots?: Array<{ lat: number; lon: number; label: string }>;
+  /** Road closures and work zones: a stretch when the path is known, else a point. */
+  roadAlerts?: MapRoadAlert[];
   /** What to fit in view. Defaults to the track, else every pin. */
   focus?: LatLon[];
   /** Smallest span to show, in metres, so a single pin isn't zoomed to street level. */

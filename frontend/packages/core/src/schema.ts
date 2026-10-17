@@ -2,7 +2,7 @@
 // that drifts (a missing field, a number sent as a string, an extra key) degrades to a sensible
 // default instead of a blank screen. Unknown keys are kept, so adapters can read backend extras.
 import { z } from 'zod';
-import type { Issue, Plan, Report, ReportPayload, Similar, TopicHit, Video } from './types';
+import type { Directions, Hazard, Issue, Plan, Report, ReportPayload, Similar, TopicHit, Video } from './types';
 
 const num = (d = 0) => z.coerce.number().catch(d);
 const str = (d = '') => z.coerce.string().catch(d);
@@ -53,11 +53,34 @@ export const ReportSchema = z.looseObject({
   generated_at: str(), summary: str(), counts: countMap, crews: countMap, rationale: str(),
   rationale_by_crew: z.record(z.string(), z.string()).optional().catch(undefined), model: z.string().optional().catch(undefined),
 });
-export const RouteSchema = z.object({ crew_id: z.coerce.string(), crew: CrewType, stops: z.array(z.coerce.string()).catch([]), eta_min: z.array(z.coerce.number()).catch([]), path: z.array(latLon).catch([]) });
+const optStr = z.string().nullable().optional().catch(undefined);
+export const RouteWarningSchema = z.object({ hazard_id: z.coerce.string(), label: str(), source: z.enum(['city', 'dashcam']).catch('city'), avoided: z.boolean().catch(false) });
+export const FacilitySchema = z.object({
+  id: z.coerce.string(), label: str(), kind: z.enum(['transfer_station', 'yard']).catch('yard'), crews: z.array(CrewType).catch([]),
+  lat: z.coerce.number(), lon: z.coerce.number(), address: optStr, source: str(), assumed: z.boolean().optional().catch(undefined),
+});
+export const HazardSchema = z.object({
+  id: z.coerce.string(), source: z.enum(['city', 'dashcam']).catch('city'), kind: str(), label: str(),
+  lat: z.coerce.number(), lon: z.coerce.number(), path: z.array(latLon).optional().catch(undefined),
+  severity: num(3), detail: optStr, until: optStr,
+});
+const pathSource = z.enum(['road', 'straight']).optional().catch(undefined);
+export const RouteSchema = z.object({
+  crew_id: z.coerce.string(), crew: CrewType, stops: z.array(z.coerce.string()).catch([]), eta_min: z.array(z.coerce.number()).catch([]), path: z.array(latLon).catch([]),
+  facility_id: optStr, depot: latLon.nullable().optional().catch(undefined), depot_label: optStr,
+  distance_km: z.number().nullable().optional().catch(undefined), path_source: pathSource,
+  warnings: z.array(RouteWarningSchema).optional().catch(undefined), maps_urls: z.array(z.string()).optional().catch(undefined), brief: optStr,
+});
 export const PlanSchema = z.looseObject({
   routes: z.array(RouteSchema).catch([]), unassigned: z.array(z.coerce.string()).catch([]),
   solver: z.enum(['cuopt', 'fallback']).catch('fallback'), solve_ms: num(0),
   unassigned_reasons: z.record(z.string(), z.string()).optional().catch(undefined),
+  facilities: z.array(FacilitySchema).optional().catch(undefined), hazards: z.array(HazardSchema).optional().catch(undefined),
+  matrix_source: pathSource,
+});
+export const DirectionsSchema = z.object({
+  path: z.array(latLon).catch([]), minutes: num(0), distance_km: num(0), path_source: z.enum(['road', 'straight']).catch('straight'),
+  warnings: z.array(RouteWarningSchema).catch([]), alternatives: num(1), maps_url: str(),
 });
 export const TopicHitSchema = z.object({ video_id: str(), start: num(), end: num(), score: num(), caption: str() });
 
@@ -87,6 +110,8 @@ export const parse = {
     return { report: ReportSchema.parse(inner) as Report, updating: Boolean(o.updating) };
   },
   plan: (raw: unknown): Plan => PlanSchema.parse(raw) as Plan,
+  hazards: (raw: unknown): Hazard[] => list(HazardSchema, raw, 'road alert', warn) as Hazard[],
+  directions: (raw: unknown): Directions => DirectionsSchema.parse(raw) as Directions,
   similar: (raw: unknown): Similar[] => (Array.isArray(raw) ? raw : []).flatMap((x: unknown) => {
     const o = x as Record<string, unknown>;
     const r = IssueSchema.safeParse(o && 'issue' in o ? o.issue : o);

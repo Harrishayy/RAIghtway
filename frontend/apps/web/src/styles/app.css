@@ -267,3 +267,32 @@ a.nav-tab[aria-current="page"]{color:var(--ink)}
 @media (max-width:860px){.panes{grid-template-columns:minmax(0,1fr)}.pane{border-right:0;border-bottom:var(--bw) solid var(--line)}.pane[data-pane="footage"]{height:auto;max-height:420px}.resizer{display:none}.nav-tabs{overflow-x:auto;max-width:100%;scrollbar-width:none}.nav-right{width:100%;justify-content:flex-start}.split,.page-grid{padding:10px}}
 @container (max-width:300px){.stage-track .stg span{font-size:9.5px}.crewrow{grid-template-columns:30px minmax(0,1fr)}.crewrow .stepper{grid-column:2;justify-self:start}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+
+/* Dispatch: per-route base, road alerts, sending a route to the crew, and the Roads tab */
+.route-base{grid-column:1/-1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.route-alerts{grid-column:1/-1;display:inline-flex;gap:6px;align-items:center;color:var(--bad)}
+.route-alerts .ic{width:14px;height:14px;flex:none}
+.route-send{display:grid;gap:10px;padding:0 12px 12px}
+.route-actions{display:flex;flex-wrap:wrap;gap:6px}
+.roads{display:grid;gap:4px}
+.roads-plan{display:grid;gap:10px}
+.roads-field{display:grid;gap:4px;min-width:0}
+.roads-field select{width:100%;min-width:0;font:inherit;font-size:13px;padding:6px 8px;border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--surface);color:var(--ink)}
+.roads-to{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roads-result{display:grid;gap:8px;justify-items:start}
+.roads-warn{list-style:none;margin:0;padding:0;display:grid;gap:4px;width:100%}
+.roads-warn li{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;color:var(--bad)}
+.roads-warn li.avoided{color:var(--ok)}
+.roads-warn li span:nth-child(2){color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roads-warn .ic{width:14px;height:14px}
+.roads-alerts{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:2px}
+.roads-alerts button{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;align-items:center;width:100%;text-align:left;padding:7px 8px;border:0;border-bottom:1px dashed var(--line);background:none;cursor:pointer;font:inherit;color:inherit}
+.roads-alerts button:hover{background:var(--surface-2)}
+.roads-alerts button>.muted{grid-column:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roads-label{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roads-sev{font:600 10.5px/1 var(--font-m);letter-spacing:.04em;text-transform:uppercase;padding:4px 6px;border-radius:var(--r);white-space:nowrap;color:var(--bad);background:color-mix(in oklab,var(--bad) 12%,transparent)}
+.roads-sev.s2,.roads-sev.s3{color:var(--ink-2);background:var(--surface-2)}
+.m-ralert{fill:none;stroke:var(--bad);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.3}
+.m-ralert.hard{stroke-width:6;opacity:.55}
+.m-ralert-pt{fill:none;stroke:var(--bad);stroke-width:2;vector-effect:non-scaling-stroke;opacity:.5}
+.m-ralert-pt.hard{opacity:.9}
