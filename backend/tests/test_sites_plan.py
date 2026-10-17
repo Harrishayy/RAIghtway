@@ -2,11 +2,12 @@
 import asyncio
 from datetime import datetime, timezone
 import json
+import math
 
 import pytest
 
 from app import config, main, store
-from app.models import Facility, IssueRecord, WorkOrder
+from app.models import Facility, IssueRecord, Scenario, ScenarioMetrics, WorkOrder
 from app.planning import cuopt, dispatch, facilities, triage
 
 YARD = Facility(id="yard", label="Test yard", kind="road_yard", crews=["roads", "inspection"], lat=43.66, lon=-79.34,
@@ -27,9 +28,9 @@ def issue(id, category="pavement", lat=43.661, lon=-79.341, severity=3, minutes=
 def state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STATE_DIR", tmp_path)
     monkeypatch.setattr(config, "FACILITIES_FILE", None)
-    facilities.load.cache_clear()
+    facilities._invalidate()
     yield tmp_path
-    facilities.load.cache_clear()
+    facilities._invalidate()
 
 
 @pytest.fixture
@@ -156,7 +157,7 @@ def test_decide_names_the_model_or_the_rules(monkeypatch):
                               {"issue_id": "b", "decision": "defer", "reason": "Cosmetic"}]}
     monkeypatch.setattr(triage, "triage_with_model", reply)
     t = asyncio.run(triage.decide(jobs, 1, {"roads": 1}, 2))
-    assert t.model == "nemotron-lightning" and t.rationale == "Potholes first." and t.by_crew == {"roads": "One truck."}
+    assert t.model == "nemotron-ultra" and t.rationale == "Potholes first." and t.by_crew == {"roads": "One truck."}
     assert {d.issue_id: (d.decision, d.by) for d in t.decisions} == {"a": ("today", "model"), "b": ("defer", "model")}
 
     async def broken(facts):
@@ -169,39 +170,71 @@ def test_decide_names_the_model_or_the_rules(monkeypatch):
 
 # ---- Round trips ----
 
-def _ctx(jobs):
+def _unit(jobs):
     vehicles = [dispatch.Vehicle("roads-1", "roads", YARD), dispatch.Vehicle("roads-2", "roads", YARD)]
-    home = {i.id: YARD for i in jobs}
-    return asyncio.run(dispatch._context("roads", vehicles, home, jobs)), vehicles
+    ctx = asyncio.run(dispatch._context("roads", [YARD], jobs))
+    ctx = dispatch.replace(ctx, vehicles=vehicles, home={i.id: YARD for i in jobs})
+    return dispatch.Unit(ctx, jobs, vehicles)
 
 
 def test_payload_starts_and_ends_each_truck_at_its_site(offline):
     jobs = [issue("a", severity=5), issue("b", lat=43.67)]
-    ctx, vehicles = _ctx(jobs)
-    locs = [ctx.index["yard"], ctx.index["a"], ctx.index["b"]]
-    p = dispatch.payload(jobs, vehicles, locs, ctx, today={"a"})
+    unit = _unit(jobs)
+    p, locs = dispatch.payload([unit], today={"a"})
     fleet, tasks = p["fleet_data"], p["task_data"]
     assert fleet["vehicle_locations"] == [[0, 0], [0, 0]]
     assert fleet["vehicle_time_windows"] == [[0, 480], [0, 480]]
     assert fleet["vehicle_break_time_windows"] == [[[210, 300], [210, 300]]]
     assert fleet["vehicle_break_durations"] == [[30, 30]] and fleet["vehicle_break_locations"] == [1, 2]
     assert tasks["task_locations"] == [1, 2] and tasks["service_times"] == [60, 60]
+    assert tasks["task_time_windows"] == [[0, dispatch.HAZARD_BY], [0, 480]]     # hazards start by noon
     assert tasks["prizes"] == [1000 + dispatch.TODAY_BONUS, 250]
     assert tasks["order_vehicle_match"] == [{"order_id": 0, "vehicle_ids": [0, 1]}, {"order_id": 1, "vehicle_ids": [0, 1]}]
-    assert len(p["cost_matrix_data"]["data"]["0"]) == 3
+    assert len(p["cost_matrix_data"]["data"]["0"]) == len(locs) == 3
+
+
+def test_units_of_two_crews_pack_into_one_problem(offline):
+    roads_unit = _unit([issue("a"), issue("b", lat=43.67)])
+    waste = [issue("w", "waste", lat=43.701, lon=-79.47)]
+    wctx = asyncio.run(dispatch._context("sanitation", [STATION], waste))
+    truck = dispatch.Vehicle("sanitation-1", "sanitation", STATION)
+    wunit = dispatch.Unit(dispatch.replace(wctx, vehicles=[truck], home={"w": STATION}), waste, [truck])
+    assert len(dispatch.pack([roads_unit, wunit])) == 1
+    assert len(dispatch.pack([roads_unit, wunit], limit=2)) == 2
+    p, locs = dispatch.payload([roads_unit, wunit], today=set())
+    match = p["task_data"]["order_vehicle_match"]
+    assert match[2] == {"order_id": 2, "vehicle_ids": [2]}            # the waste job only on the waste truck
+    assert all(m["vehicle_ids"] == [0, 1] for m in match[:2])
+    assert p["fleet_data"]["vehicle_locations"] == [[0, 0], [0, 0], [1, 1]]      # sites first, then jobs
+
+
+def test_pinned_jobs_go_today_whatever_the_floor(offline):
+    low = issue("pin", severity=1, lat=43.75)
+    low.pinned = True
+    nocrew = issue("pin-g", "graffiti", severity=1)
+    nocrew.pinned = True
+    out = triage.rules([low, nocrew, issue("other", severity=3)], 4, {"roads": 100}, days=1)
+    assert out["pin"].decision == "today" and out["pin"].pinned and "Pinned by operator" in out["pin"].reason
+    assert out["pin-g"].decision == "defer" and "pinned" in out["pin-g"].reason   # no graffiti truck anywhere
+    clamped, _ = triage.clamp({"pin": ("defer", "x")}, [low], out, 4, {"roads": 100}, 1)
+    assert clamped["pin"].decision == "today"
+    unit = _unit([low])
+    p, _ = dispatch.payload([unit], today={"pin"})
+    assert p["task_data"]["prizes"] == [50 + dispatch.TODAY_BONUS + dispatch.PIN_BONUS]
 
 
 def test_parse_and_schedule_a_cuopt_answer(offline):
     jobs = [issue("a", severity=5), issue("b", lat=43.67)]
-    ctx, vehicles = _ctx(jobs)
-    locs = [ctx.index["yard"], ctx.index["a"], ctx.index["b"]]
+    unit = _unit(jobs)
+    ctx = unit.ctx
+    _, locs = dispatch.payload([unit], today=set())
     leg = ctx.matrix[ctx.index["a"]][ctx.index["b"]]
     answer = {"vehicle_data": {"roads-1": {
         "task_id": ["Depot", "a", "Break", "b", "Depot"],
         "type": ["Depot", "Delivery", "Break", "Delivery", "Depot"],
         "arrival_stamp": [0.0, 2.0, 210.0, 240.0 + leg, 300.0 + leg + 20],
         "route": [0, 1, 1, 2, 0]}}}
-    [td] = dispatch.parse(answer, jobs, vehicles, locs, day=1)
+    [td] = dispatch.parse(answer, [unit], locs, day=1)
     assert [x.kind for x in td.visits] == ["job", "break", "job"] and td.solver == "cuopt" and td.lunch == "solver"
     entries, totals = dispatch.schedule(td, ctx)
     assert [e.kind for e in entries] == ["depart", "job", "break", "job", "return"]
@@ -248,3 +281,108 @@ def test_site_override_and_severity_floor(offline, monkeypatch):
     assert sorted(plan.deferred) == ["lo", "w"]
     assert [s for r in plan.routes for s in r.stops] == ["hi"]
     assert {r.vehicle_id for r in plan.routes} == {"roads-1", "roads-2"}      # day 1 keeps idle trucks
+
+
+# ---- Recommendation loop ----
+
+from app.planning import recommend  # noqa: E402
+
+
+def fake_cuopt(payload):
+    """A stand-in solver: each task to its first allowed vehicle, in order, while the shift lasts."""
+    fleet, tasks = payload["fleet_data"], payload["task_data"]
+    matrix = payload["cost_matrix_data"]["data"]["0"]
+    out = {}
+    clock = {v: 0.0 for v in fleet["vehicle_ids"]}
+    at = {v: fleet["vehicle_locations"][n][0] for n, v in enumerate(fleet["vehicle_ids"])}
+    for n, task in enumerate(tasks["task_ids"]):
+        v = fleet["vehicle_ids"][tasks["order_vehicle_match"][n]["vehicle_ids"][0]]
+        loc = tasks["task_locations"][n]
+        arrive = clock[v] + matrix[at[v]][loc]
+        if arrive + tasks["service_times"][n] + matrix[loc][fleet["vehicle_locations"][0][0]] > 450:
+            continue
+        entry = out.setdefault(v, {"task_id": ["Depot"], "type": ["Depot"], "arrival_stamp": [0.0], "route": [at[v]]})
+        entry["task_id"].append(task); entry["type"].append("Delivery")
+        entry["arrival_stamp"].append(arrive); entry["route"].append(loc)
+        clock[v], at[v] = arrive + tasks["service_times"][n], loc
+    return {"vehicle_data": out, "status": 0}
+
+
+@pytest.fixture
+def backlog(offline, monkeypatch, state):
+    jobs = [issue("h", severity=5), issue("w4", severity=4, lat=43.68), issue("m3", lat=43.69),
+            issue("r1", severity=1, lat=43.665), issue("bin", "waste", severity=3, lat=43.701, lon=-79.47)]
+    monkeypatch.setattr(store, "canonical_issues", lambda *a, **k: jobs)
+    monkeypatch.setattr(store, "latest_plan", lambda: None)
+    return jobs
+
+
+def test_scenario_clamp_keeps_proposals_sane(backlog):
+    now = {"yard": {"roads": 1}, "station": {"sanitation": 1}}
+    raw = recommend._Proposed(label="Big", intent="all in", min_severity=9,
+                              sites={"yard": {"roads": 50, "sanitation": 2}, "nowhere": {"roads": 1}})
+    s = recommend.clamp(raw, now, backlog, "s1")
+    assert s.min_severity == 5 and "sanitation" not in s.sites["yard"]
+    assert s.sites["yard"]["roads"] <= max(1, math.ceil(60 / recommend.TRUCK_MINUTES) + 2)
+    assert s.sites["station"] == {"sanitation": 1}                    # untouched sites keep their trucks
+    notes = " ".join(s.clamped)
+    assert "Unknown site nowhere" in notes and "does not host sanitation" in notes and "trimmed" in notes
+
+
+def test_score_and_pick_validation():
+    def m(**kw):
+        base = dict(jobs_selected=10, jobs_routed=10, s5_total=2, s5_covered=2, s4_total=4, s4_covered=4,
+                    drive_hours=5.0, work_hours=20.0, distance_km=80, trucks_used=4, trucks_available=4,
+                    deferred=0, solver="cuopt")
+        return ScenarioMetrics(**(base | kw))
+    a = Scenario(id="a", label="A", intent="", source="baseline", min_severity=3, sites={}, metrics=m(s5_covered=1))
+    b = Scenario(id="b", label="B", intent="", source="model", min_severity=3, sites={}, metrics=m(drive_hours=9.0))
+    c = Scenario(id="c", label="C", intent="", source="model", min_severity=3, sites={}, metrics=m(drive_hours=4.0))
+    d = Scenario(id="d", label="D", intent="", source="model", min_severity=3, sites={}, error="budget")
+    assert recommend.rule_pick([a, b, c, d]).id == "c"              # S5 coverage first, then drive hours
+    assert recommend.rule_pick([a, b]).id == "b"
+    assert recommend.rule_pick([d]) is None
+
+
+def test_recommend_with_no_model_uses_rules_and_cuopt(backlog, monkeypatch):
+    async def solver(payload):
+        return fake_cuopt(payload)
+    monkeypatch.setattr(cuopt, "solve", solver)
+    rec = asyncio.run(recommend.recommend(days=1, min_severity=3))
+    assert rec.agent_model == "rules" and rec.proposer == "rules" and rec.picker == "rules"
+    assert rec.scenarios[0].id == "baseline" and len(rec.scenarios) >= 2
+    assert all(s.metrics and s.metrics.solver == "cuopt" for s in rec.scenarios)
+    assert rec.recommended in {s.id for s in rec.scenarios} and "code rule" in rec.rationale
+    base = rec.scenarios[0].metrics
+    assert base.s5_total == 1 and base.s5_covered == 1 and base.triage == "rules"
+    assert (state_file := config.STATE_DIR / "recommendation.json").exists() and rec.id in state_file.read_text()
+    # Apply and plan reuses the solved routes while nothing changed.
+    plan = asyncio.run(dispatch.plan(days=1, scenario=(rec.id, rec.recommended)))
+    assert plan.scenario_id == rec.recommended and plan.recommendation.id == rec.id and plan.solver == "cuopt"
+
+
+def test_recommend_model_pick_is_validated_and_cuopt_fallback_is_named(backlog, monkeypatch):
+    async def propose(facts):
+        assert facts["sites"] and facts["pinned"] == []
+        return {"scenarios": [{"label": "S4+", "intent": "hazards first", "min_severity": 4, "sites": {}},
+                              {"label": "Two road trucks", "intent": "clear S3", "min_severity": 3,
+                               "sites": {"yard": {"roads": 2}}}], "priorities": ["roads downtown"]}
+
+    async def pick(table):
+        return {"recommended": "made-up", "rationale": "x", "tradeoffs": []}
+    monkeypatch.setattr(recommend, "recommend_propose", propose)
+    monkeypatch.setattr(recommend, "recommend_pick", pick)
+    rec = asyncio.run(recommend.recommend(days=1, min_severity=3))     # cuOpt is offline: the fallback evaluates
+    assert rec.proposer == "nemotron" and rec.picker == "rules" and rec.agent_model == "nemotron-ultra"
+    assert any("not a solved scenario" in c for c in rec.caveats)
+    assert any("nearest-neighbour" in c for c in rec.caveats)
+    assert all(s.metrics.solver == "fallback" for s in rec.scenarios)
+    assert [s.source for s in rec.scenarios] == ["baseline", "model", "model"] and rec.priorities == ["roads downtown"]
+
+    async def good_pick(table):
+        ids = [s["id"] for s in table["scenarios"]]
+        return {"recommended": ids[-1], "rationale": "Covers the S5 job with less driving.", "tradeoffs": ["t"]}
+    monkeypatch.setattr(recommend, "recommend_pick", good_pick)
+    rec = asyncio.run(recommend.recommend(days=1, min_severity=3))
+    assert rec.picker == "nemotron" and rec.recommended == rec.scenarios[-1].id
+    assert rec.rationale.startswith("Covers the S5 job")

@@ -193,7 +193,7 @@ def _report_issue(issue: IssueRecord, drives: dict[str, str], places: dict[str, 
     place = places.get(_place_key(issue.lat, issue.lon)) if issue.lat is not None and issue.lon is not None else None
     return ReportIssue(
         id=issue.id, category=issue.category, severity=issue.severity, severity_reason=issue.severity_reason,
-        description=issue.description, video_id=issue.video_id, drive=drives.get(issue.video_id), t=issue.t,
+        description=issue.description, name=issue.name, video_id=issue.video_id, drive=drives.get(issue.video_id), t=issue.t,
         lat=issue.lat, lon=issue.lon, place=place, sightings=issue.sightings, confidence=issue.confidence,
         deadline=_deadline(issue.severity), crew=CREW_FOR[issue.category],
         repair=issue.work_order.repair if issue.work_order else None, minutes=_minutes(issue))

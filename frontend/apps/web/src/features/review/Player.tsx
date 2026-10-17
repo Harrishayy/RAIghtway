@@ -2,7 +2,7 @@
 // Footage, HUD and transport. Plays the backend's video when it serves one; otherwise a clock drives
 // the playhead and the frame steps through findings. Either way every view follows the same playhead.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fmtClock, fmtCoord, fmtTimecode, hashStr, type Issue, type Video } from '@raightway/core';
+import { fmtClock, fmtCoord, fmtTimecode, hashStr, issueLabel, type Issue, type Video } from '@raightway/core';
 import { useClient } from '@/domain/client';
 import { fixAt, issueAt } from '@/domain/derive';
 import { usePlayback } from '@/state/playback';
@@ -10,6 +10,7 @@ import { useUi } from '@/state/ui';
 import { Frame } from '@/ui/Footage/Frame';
 import { Icon } from '@/ui/Icon';
 import { Seg } from '@/ui/Seg';
+import { EditLayer, MarkForm, MarkLayer, type MarkDraft } from './MarkIssue';
 
 export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const client = useClient(); const url = client.videoUrl(video);
@@ -21,6 +22,29 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const [mediaDur, setMediaDur] = useState(0);
   const dur = video.duration_s || mediaDur;
   const rates = src ? [1, 2, 4] : [1, 4, 16]; const r = rates.includes(rate) ? rate : rates[1]!;
+  // Mark issue: paused on the current frame, the operator boxes and files an issue (MarkIssue.tsx).
+  // `form` keys the form: a new key starts it fresh; redrawing an edit as a new issue keeps the values typed so far.
+  const [stored, setDraft] = useState<(MarkDraft & { videoId: string; form: number }) | null>(null);
+  const sample = client.id === 'mock';
+  // a real backend grabs the keyframe from the playable file, so a new issue needs one; editing a finding does not
+  const canCreate = client.capabilities.markIssues && (sample || Boolean(src));
+  // the finding "Mark issue" edits: the one selected on the playback when it is near the playhead, else the one at it
+  const editTarget = useCallback((): Issue | null => {
+    const s = usePlayback.getState(); const sel = issues.find(i => i.id === s.selectedIssue && !i.provisional);
+    if (sel) { const d = s.t - sel.t; if (d > -1.2 && d < 7) return sel; }
+    const at = issueAt(issues, s.t); return at && !at.provisional ? at : null;
+  }, [issues]);
+  const startMark = useCallback(() => {
+    setPlaying(false); const target = editTarget();
+    if (target) { select(target.id); setDraft({ videoId: video.id, t: target.t, box: target.bbox, target, form: Date.now() }); return; }
+    if (canCreate) setDraft({ videoId: video.id, t: usePlayback.getState().t, box: null, form: Date.now() });
+  }, [setPlaying, editTarget, select, canCreate, video.id]);
+  // a mark belongs to its drive; scrubbing while marking moves a new one to the new frame (a box from the old frame
+  // no longer fits). An edit stays on its finding's keyframe.
+  const draft = stored && stored.videoId === video.id ? (!stored.target && Math.abs(stored.t - t) > 0.04 ? { ...stored, t, box: null } : stored) : null;
+  const editing = draft?.target ?? null;
+  const marking = Boolean(draft);
+  const setBox = (box: MarkDraft['box']) => setDraft(draft ? { ...draft, box } : null);
 
   const step = useCallback((dir: 1 | -1) => {
     const cur = usePlayback.getState().t + 0.41;
@@ -56,15 +80,16 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tg = e.target as HTMLElement; if (tg.closest('input,textarea,select,[contenteditable]')) return;
+      if (marking) return;                                 // marking: the form owns the keyboard
+      if ((e.key === 'm' || e.key === 'M') && client.capabilities.markIssues && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); startMark(); return; }
       if (e.key === 'k' || e.key === 'K' || (e.key === ' ' && !tg.closest('button'))) { e.preventDefault(); setPlaying(!usePlayback.getState().playing); }
       else if (e.key === '[') step(-1); else if (e.key === ']') step(1);
       else if (e.key === 'ArrowLeft' && !tg.closest('[role=separator],.pane-grip')) seek(Math.max(0, usePlayback.getState().t - 5));
       else if (e.key === 'ArrowRight' && !tg.closest('[role=separator],.pane-grip')) seek(Math.min(dur, usePlayback.getState().t + 5));
     };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
-  }, [step, seek, setPlaying, dur]);
+  }, [step, seek, setPlaying, dur, marking, client.capabilities.markIssues, startMark]);
 
-  const sample = client.id === 'mock';
   const near = issueAt(issues, t);
   // real backends: without a video file, hold the nearest real keyframe (never a drawn stand-in)
   const held = !sample && !near ? issues.reduce<Issue | null>((b, i) => (!b || Math.abs(i.t - t) < Math.abs(b.t - t) ? i : b), null) : null;
@@ -77,13 +102,20 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
   const drift = shown ? (t - shown.t + 1.2) / 8.2 : (t % 9) / 9;
   return (
     <>
-      <Frame placeholder={sample ? 'scene' : 'blank'} emptyLabel={issues.length ? 'No frame' : video.status === 'done' ? 'No findings on this drive' : 'Analysing…'} issue={boxed} src={boxed ? client.frameUrl(boxed) : null} still={still} seed={hashStr(`${video.id}${Math.floor(t / 9)}`)} drift={drift}
+      <Frame placeholder={sample ? 'scene' : 'blank'} emptyLabel={issues.length ? 'No frame' : video.status === 'done' ? 'No findings on this drive' : 'Analysing…'}
+        issue={editing ?? (draft ? null : boxed)} src={editing ? client.frameUrl(editing) : !draft && boxed ? client.frameUrl(boxed) : null} still={editing ? true : draft ? false : still}
+        overlay={editing ? <EditLayer /> : draft ? <MarkLayer box={draft.box} onBox={setBox} /> : undefined} seed={hashStr(`${video.id}${Math.floor(t / 9)}`)} drift={drift}
         video={src ? <video ref={el} src={src} playsInline muted preload="metadata" onLoadedMetadata={e => setMediaDur(e.currentTarget.duration || 0)} onError={() => setBadUrl(url)} /> : undefined}
         hud={{
           tl: <><span className="rec" /><span className="hud-cam">{video.camera_id ?? 'camera'} · </span>{video.drive ?? video.filename}</>,
           bl: fix ? <><span className="hud-gps">{fmtCoord(fix.at[0], fix.at[1])}{fix.speed != null ? ' · ' : ''}</span>{fix.speed != null ? `${Math.round(fix.speed)} km/h` : ''}</> : null,
           br: held ? <>keyframe {fmtTimecode(held.t)}</> : fmtTimecode(video.start_s + t),
         }} />
+      {draft ? (
+        <MarkForm key={draft.form} video={video} draft={draft} defaultCategory={near?.category ?? 'pavement'} canCreate={canCreate} onClearBox={() => setBox(null)}
+          onRedraw={() => { seek(draft.t); setDraft({ ...draft, target: null }); }} onNew={() => { seek(draft.t); setDraft({ videoId: video.id, t: draft.t, box: null, form: Date.now() }); }}
+          onCancel={() => setDraft(null)} onSaved={i => { setDraft(null); select(i.id); }} />
+      ) : (
       <div className="transport">
         <span className="transport-keys">
           <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => step(-1)} aria-label="Previous finding" title="Previous finding [">{<Icon name="prev" />}</button>
@@ -92,7 +124,12 @@ export function Player({ video, issues }: { video: Video; issues: Issue[] }) {
         </span>
         <span className="tc num">{fmtTimecode(t)}<small> / {fmtClock(dur)}</small></span>
         <span className="speed"><span className="speed-l">Speed</span><Seg label="Playback speed" value={r} onChange={setRate} options={rates.map(x => ({ value: x, label: `${x}×` }))} /></span>
+        {client.capabilities.markIssues ? (
+          <button type="button" className="btn btn-secondary btn-sm mark-btn" onClick={startMark} disabled={!canCreate && !near}
+            title={near ? `Mark issue: edit “${issueLabel(near)}” or save as new (M)` : canCreate ? 'Mark an issue on this frame (M)' : 'Marking needs the playable footage for this drive'}><Icon name="plus" /><span className="mark-btn-l">Mark issue</span></button>
+        ) : null}
       </div>
+      )}
     </>
   );
 }

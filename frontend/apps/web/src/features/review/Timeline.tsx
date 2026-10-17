@@ -2,7 +2,7 @@
 // Ruler, one lane per category with each finding at its exact time, a VSS search lane, a speed lane
 // and the playhead. Press and drag anywhere on a lane to scrub.
 import { useMemo, useRef } from 'react';
-import { CATEGORY, clamp, fmtClock, type CategoryId, type Issue, type TopicHit, type Video } from '@raightway/core';
+import { CATEGORY, clamp, fmtClock, issueLabel, type CategoryId, type Issue, type TopicHit, type Video } from '@raightway/core';
 import { usePlayback } from '@/state/playback';
 import { useSize } from '@/lib/useSize';
 import { Icon } from '@/ui/Icon';
@@ -38,8 +38,8 @@ export function Timeline({ video, issues, cats }: { video: Video; issues: Issue[
             <div key={c} className="lane" data-cat={c}>
               <span className="lane-l" title={`${CATEGORY[c].label}: ${list.length}`}><Icon name={c} /><span className="ll">{CATEGORY[c].label}</span><b>{list.length}</b></span>
               <span className="lane-t" data-seek>
-                {list.map(i => <button key={i.id} type="button" className={`mk${i.duplicate_of ? ' merged' : ''}${i.provisional ? ' prov' : ''}`} data-sev={i.severity} aria-pressed={i.id === selectedIssue} style={{ left: `${(i.t / dur) * 100}%` }}
-                  aria-label={`${CATEGORY[c].label}, severity ${i.severity}, at ${fmtClock(i.t)}`} title={`${fmtClock(i.t)} · ${i.description}`} onClick={() => { setPlaying(false); select(i.id); seek(Math.max(0, i.t - 0.4)); }} />)}
+                {list.map(i => <button key={i.id} type="button" className={`mk${i.duplicate_of ? ' merged' : ''}${i.provisional ? ' prov' : ''}${i.source === 'manual' ? ' manual' : ''}`} data-sev={i.severity} aria-pressed={i.id === selectedIssue} style={{ left: `${(i.t / dur) * 100}%` }}
+                  aria-label={`${i.source === 'manual' ? 'Manual: ' : ''}${i.name?.trim() ? `${i.name.trim()}, ` : ''}${CATEGORY[c].label}, severity ${i.severity}, at ${fmtClock(i.t)}`} title={`${fmtClock(i.t)} · ${i.source === 'manual' ? 'Manual · ' : ''}${issueLabel(i)}`} onClick={() => { setPlaying(false); select(i.id); seek(Math.max(0, i.t - 0.4)); }} />)}
               </span>
             </div>
           );

@@ -168,6 +168,23 @@ def search_full(query: str, top_k: int = 100, camera_id: str = "pie_cam-3",
         return {"results": results, "synthesis": synthesis, "cached": False}
 
 
+def segment_caption(source: str) -> str:
+    """VSS's caption (reasoning_content) for one segment, cached like searches. "" when VSS has none."""
+    key = "segment:" + source
+    with _lock:
+        cache = _load_cache()
+        if key in cache:
+            return cache[key].get("caption", "")
+        try:
+            data = _authed("GET", "/api/v1/videos/metadata", params={"source": source}).json()
+        except Exception as exc:
+            raise RuntimeError(f"VSS segment metadata failed ({config.redact(exc)})") from None
+        caption = data.get("reasoning_content") if isinstance(data, dict) else None
+        cache[key] = {"caption": caption if isinstance(caption, str) else "", "at": time.time()}
+        _save_cache()
+        return cache[key]["caption"]
+
+
 def stream_url(source: str) -> str:
     """Seekable proxy URL for a segment's s3:// source (playback takes the token as a param)."""
     return f"{_base()}/api/v1/videos/stream?" + urlencode({"source": source, "token": login()})

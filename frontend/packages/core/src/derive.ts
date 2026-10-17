@@ -19,6 +19,9 @@ export interface IssueSummary {
   top: Issue[];
 }
 
+/** The one label to show for an issue (or a report row): the operator's name when set, else the description. */
+export const issueLabel = (i: { name?: string | null; description: string }): string => i.name?.trim() || i.description;
+
 export const isCanonical = (i: Issue) => !i.duplicate_of && !i.provisional;
 /** Open work: canonical and not judged a false positive by the severity rater (backend leaves those out too). */
 export const isOpen = (i: Issue) => isCanonical(i) && i.verdict !== 'rejected';

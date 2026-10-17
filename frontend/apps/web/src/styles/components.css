@@ -86,6 +86,10 @@ code{font-family:var(--font-m);font-size:.88em;background:var(--surface-2);paddi
 [data-dir="survey"] .sev-dot{border-radius:3px}
 [data-dir="paint"] .sev-dot{box-shadow:inset 0 0 0 2px var(--line-strong)}
 [data-cat="graffiti"]{--cc:var(--c-graffiti)}[data-cat="markings"]{--cc:var(--c-markings)}[data-cat="work_zone"]{--cc:var(--c-workzone)}[data-cat="pavement"]{--cc:var(--c-pavement)}[data-cat="signage"]{--cc:var(--c-signage)}[data-cat="waste"]{--cc:var(--c-waste)}
+/* per-truck route colours (Dispatch): after [data-cat] so a truck colour wins on the same element */
+[data-tone="1"]{--cc:var(--route-1)}[data-tone="2"]{--cc:var(--route-2)}[data-tone="3"]{--cc:var(--route-3)}[data-tone="4"]{--cc:var(--route-4)}[data-tone="5"]{--cc:var(--route-5)}[data-tone="6"]{--cc:var(--route-6)}[data-tone="7"]{--cc:var(--route-7)}[data-tone="8"]{--cc:var(--route-8)}
+/* operating-site kinds */
+[data-kind="transfer_station"]{--sk:var(--site-transfer)}[data-kind="collection_yard"]{--sk:var(--site-collection)}[data-kind="road_yard"],[data-kind="yard"]{--sk:var(--site-road)}[data-kind="cleaning_yard"]{--sk:var(--site-cleaning)}
 .cat{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;white-space:nowrap}
 .cat .ic{color:var(--cc);width:15px;height:15px}
 

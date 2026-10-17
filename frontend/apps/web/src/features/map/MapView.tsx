@@ -3,10 +3,10 @@
 // offline schematic (SchematicMap) if WebGL or the tile service is unavailable, so the demo never shows
 // an empty box. Adds the alert bar (counts per issue type, hazards you can step through) and a legend.
 import dynamic from 'next/dynamic';
-import { memo, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { CATEGORIES, SEVERITY, type CategoryId, type Issue, type LatLon } from '@raightway/core';
 import { env } from '@/config/env';
-import { ALERT_NOUN, GLYPH } from './glyphs';
+import { ALERT_NOUN, GLYPH, SITE_GLYPH, SITE_NOUN, type SiteKind } from './glyphs';
 import SchematicMap from './SchematicMap';
 
 export interface MapStop { at: LatLon; n: number; eta: string; done?: boolean }
@@ -16,7 +16,15 @@ export interface MapRoute {
   stops?: MapStop[];
   /** Where the crew is now. Omit to animate a crew dot along the route. */
   at?: LatLon | null;
+  /** A per-truck colour (0-based, wraps at 8 tokens: --route-1…--route-8). Omit to colour by category. */
+  tone?: number;
 }
+/** A planning zone: a City ward or a drawn area. `count`/`worst` drive the light per-zone count layer. */
+export interface MapZone { id: string; label: string; short?: string; kind: 'ward' | 'custom'; polygons: LatLon[][]; selected?: boolean; count?: number; worst?: number }
+/** Polygon drawing: clicks add vertices, double-click or Enter closes, Esc cancels, Backspace undoes; vertices drag. */
+export interface MapDrawing { points: LatLon[]; onPoints: (points: LatLon[]) => void; onClose: () => void; onCancel: () => void }
+/** An operating site: drawn as a labelled square badge with its kind's glyph, never like an issue pin. */
+export interface MapSite { id: string; lat: number; lon: number; label: string; kind: SiteKind; assumed?: boolean; dim?: boolean }
 export interface MapRoadAlert { id: string; lat: number; lon: number; path?: LatLon[]; severity: number; label: string }
 export interface MapViewProps {
   issues: Issue[];
@@ -34,6 +42,17 @@ export interface MapViewProps {
   depots?: Array<{ lat: number; lon: number; label: string }>;
   /** Road closures and work zones: a stretch when the path is known, else a point. */
   roadAlerts?: MapRoadAlert[];
+  /** Operating sites (transfer stations, collection, road and cleaning yards). */
+  sites?: MapSite[];
+  selectedSiteId?: string | null;
+  onSiteSelect?: (id: string) => void;
+  /** A click on the map away from any marker (e.g. to place a new site). */
+  onMapClick?: (at: LatLon) => void;
+  /** Planning zones: outlines, a count label each, the selected ones highlighted and everything outside them dimmed. */
+  zones?: MapZone[];
+  onZoneSelect?: (id: string) => void;
+  /** Drawing a zone: the in-progress ring and its callbacks. While set, clicks add vertices. */
+  drawing?: MapDrawing | null;
   /** What to fit in view. Defaults to the track, else every pin. */
   focus?: LatLon[];
   /** Smallest span to show, in metres, so a single pin isn't zoomed to street level. */
@@ -60,7 +79,20 @@ function MapViewImpl(props: MapViewProps) {
   const hz = hzIdx >= 0 ? hazards[hzIdx % Math.max(1, hazards.length)] : undefined;
   const focus: LatLon[] | undefined = hz ? [[hz.lat!, hz.lon!]] : props.focus;
   const nextHazard = () => { const k = (hzIdx + 1) % Math.max(1, hazards.length); setHzIdx(k); const h = hazards[k]; if (h) props.onSelect?.(h); };
-  const engineProps = { ...props, focus, minSpan: hz ? 700 : props.minSpan, bearing: props.bearing ?? (env.basemap !== 'none' ? -17 : 0) };
+  const drawing = props.drawing;
+  // keyboard for drawing: Enter closes the ring, Escape cancels, Backspace removes the last point
+  useEffect(() => {
+    if (!drawing) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.key === 'Enter' && drawing.points.length >= 3) { e.preventDefault(); drawing.onClose(); }
+      else if (e.key === 'Escape') { e.preventDefault(); drawing.onCancel(); }
+      else if (e.key === 'Backspace' && drawing.points.length) { e.preventDefault(); drawing.onPoints(drawing.points.slice(0, -1)); }
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [drawing]);
+  const engineProps = { ...props, focus, minSpan: hz ? 700 : props.minSpan, bearing: props.bearing ?? (env.basemap !== 'none' ? -17 : 0),
+    onMapClick: drawing ? (at: LatLon) => drawing.onPoints([...drawing.points, at]) : props.onMapClick };
 
   return (
     <div className={`mapbox${props.className ? ` ${props.className}` : ''}`}>
@@ -87,6 +119,7 @@ function MapViewImpl(props: MapViewProps) {
         <div className="map-legend" role="note" aria-label="Map key">
           <ul>{CATEGORIES.map(c => <li key={c.id} data-cat={c.id}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={GLYPH[c.id]} /></svg>{ALERT_NOUN[c.id]}</li>)}</ul>
           <div className="map-legend-sev">{SEVERITY.map(s => <span key={s.level} title={s.label}><i className="sev-dot" data-sev={s.level}>{s.level}</i>{s.when}</span>)}</div>
+          {props.sites?.length ? <ul className="map-legend-sites">{[...new Set(props.sites.map(x => x.kind))].map(k => <li key={k} className="site-chip" data-kind={k}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={SITE_GLYPH[k]} /></svg>{SITE_NOUN[k]}</li>)}</ul> : null}
         </div>
       )}
       {!useTiles && env.basemap === 'tiles' ? <span className="map-offline" title="Map tiles are unavailable; showing the offline map">Offline map</span> : null}

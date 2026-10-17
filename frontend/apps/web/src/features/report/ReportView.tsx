@@ -5,7 +5,7 @@
 // never overstates itself. A report from before the detail sections still renders: summary, matrix, crews.
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { CATEGORIES, CATEGORY, CREW_FOR, SEVERITY, fmtCoord, fmtHours, fmtTimecode, plural, raterDef, summarizeIssues, type Issue, type Report, type ReportCrewPlan, type ReportIssue, type ReportProvenance, type ReportSection, type Severity } from '@raightway/core';
+import { CATEGORIES, CATEGORY, CREW_FOR, SEVERITY, fmtCoord, fmtHours, fmtTimecode, issueLabel, plural, raterDef, summarizeIssues, type Issue, type Report, type ReportCrewPlan, type ReportIssue, type ReportProvenance, type ReportSection, type Severity } from '@raightway/core';
 import { useClient } from '@/domain/client';
 import { useIssues, useRegenerateReport, useReport } from '@/domain/queries';
 import { usePlayback } from '@/state/playback';
@@ -15,6 +15,7 @@ import { Icon } from '@/ui/Icon';
 import { RichText } from '@/ui/RichText';
 import { Empty, Failed, Loading } from '@/ui/State';
 import { Thumb } from '@/ui/Thumb';
+import { PhotoButton, photoOf } from '@/ui/Lightbox';
 
 const DEADLINE: Record<ReportIssue['deadline'], ['failed' | 'hold' | 'neutral', string]> = {
   today: ['failed', 'Today'], 'this week': ['hold', 'This week'], 'this month': ['neutral', 'This month'], routine: ['neutral', 'Routine'],
@@ -60,7 +61,7 @@ export function ReportView() {
               <tbody>{priorities.map(p => (
                 <tr key={p.id} tabIndex={0} onClick={() => watch(p)} onKeyDown={e => { if (e.key === 'Enter') watch(p); }} title="Watch in Review">
                   <td><SevDot level={sevOf(p.severity)} /></td>
-                  <td className="d"><span className="pri-f"><Thumb src={frame(p)} category={p.category} /><span className="two"><b>{p.description}</b><span className="muted">{p.severity_reason ?? CATEGORY[p.category].label}</span></span></span></td>
+                  <td className="d"><span className="pri-f"><PhotoButton src={frame(p)} photo={photoOf(p)} stopRow><Thumb src={frame(p)} category={p.category} /></PhotoButton><span className="two"><b title={p.name ? p.description : undefined}>{issueLabel(p)}</b><span className="muted">{p.severity_reason ?? CATEGORY[p.category].label}</span></span></span></td>
                   <td className="pri-where"><span className="two"><span>{p.place ?? (p.lat != null && p.lon != null ? fmtCoord(p.lat, p.lon) : 'No location')}</span><span className="muted mono small">{p.drive ?? p.video_id} @ {fmtTimecode(p.t)}{p.sightings > 1 ? ` · seen ${p.sightings}×` : ''}</span></span></td>
                   <td><Chip tone={DEADLINE[p.deadline][0]} plain>{DEADLINE[p.deadline][1]}</Chip></td>
                 </tr>
@@ -156,9 +157,9 @@ function Section({ s, frame, onOpen }: { s: ReportSection; frame: (r: ReportIssu
           <ul className="sec-top" aria-label="Worst findings">{s.top.map(t => (
             <li key={t.id}><button type="button" onClick={() => onOpen(t)} title="Watch in Review">
               <Thumb src={frame(t)} category={t.category} />
-              <span className="two"><span><b>{t.description}</b></span><span className="muted">{t.severity_reason ?? t.repair ?? ''}</span><span className="muted small mono">{t.place ?? t.drive ?? t.video_id}{t.place && t.drive ? ` · ${t.drive}` : ''} @ {fmtTimecode(t.t)}{t.sightings > 1 ? ` · ${t.sightings}×` : ''}</span></span>
+              <span className="two"><span><b title={t.name ? t.description : undefined}>{issueLabel(t)}</b></span><span className="muted">{t.severity_reason ?? t.repair ?? ''}</span><span className="muted small mono">{t.place ?? t.drive ?? t.video_id}{t.place && t.drive ? ` · ${t.drive}` : ''} @ {fmtTimecode(t.t)}{t.sightings > 1 ? ` · ${t.sightings}×` : ''}</span></span>
               <SevDot level={sevOf(t.severity)} />
-            </button></li>
+            </button><PhotoButton src={frame(t)} photo={photoOf(t)} className="thumb-cover" /></li>
           ))}</ul>
         ) : null}
       </div>

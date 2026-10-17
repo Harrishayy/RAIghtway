@@ -19,7 +19,8 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from app import config, curation, store
-from app.models import (CREW_FOR, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Report, Route,
+from app.models import (CREW_FOR, BBox, Category, Crew, Directions, Facility, Hazard, Issue, IssueRecord, Plan, Recommendation, Zone,
+                        Report, Route,
                         SimilarIssue, Video, VideoRecord)
 
 if not logging.getLogger().handlers:
@@ -304,6 +305,62 @@ def issues():
     return [_issue(i) for i in curation.visible(store.canonical_issues())]
 
 
+class ManualIssueRequest(BaseModel):
+    """An issue an operator marks on footage (Review → Mark issue)."""
+    video_id: str
+    t: Annotated[float, Field(ge=0)]
+    category: Category
+    severity: Annotated[int, Field(ge=1, le=5)]
+    description: Annotated[str, Field(max_length=500)] = ""
+    bbox: BBox | None = None                                    # omitted: the whole frame
+    pinned: bool = True                                         # include in the next plan
+    name: Annotated[str, Field(max_length=200)] | None = None   # operator's name; trimmed to 80 chars
+
+
+@app.post("/api/issues", response_model=Issue)
+async def create_manual_issue(body: ManualIssueRequest):
+    """Operator-reported issue: keyframe, GPS, work order and embedding are best effort (app/pipeline/manual.py)."""
+    manual = importlib.import_module("app.pipeline.manual")
+    if body.bbox is not None:
+        x, y = min(max(body.bbox.x, 0.0), 1.0), min(max(body.bbox.y, 0.0), 1.0)
+        body.bbox = BBox(x=x, y=y, w=min(max(body.bbox.w, 0.0), 1.0 - x), h=min(max(body.bbox.h, 0.0), 1.0 - y))
+        if body.bbox.w < 0.005 or body.bbox.h < 0.005:
+            body.bbox = None
+    try:
+        record = await manual.create(video_id=body.video_id, t=body.t, category=body.category,
+                                     severity=body.severity, description=body.description, bbox=body.bbox,
+                                     pinned=body.pinned, name=body.name)
+    except manual.VideoNotFound:
+        raise HTTPException(404, "Video not found") from None
+    except Exception as exc:
+        log.warning("Manual issue failed (%s)", config.redact(exc))
+        raise HTTPException(503, "Could not save the issue") from None
+    return _issue(record)
+
+
+class IssuePatch(BaseModel):
+    pinned: bool | None = None                                  # include in the next plan
+    severity: Annotated[int, Field(ge=1, le=5)] | None = None   # operator grade (a rating row, reversible)
+    revert_severity: bool = False                               # undo the operator grade
+    name: Annotated[str, Field(max_length=200)] | None = None   # operator's name, trimmed to 80; "" clears it
+
+
+@app.patch("/api/issues/{id}", response_model=Issue)
+def update_issue(id: str, body: IssuePatch):
+    """Pin/unpin, name or set an operator severity. Overlay rows only; issue rows are never rewritten."""
+    _require_issue(id)
+    manual = importlib.import_module("app.pipeline.manual")
+    try:
+        record = manual.update(id, pinned=body.pinned, severity=body.severity, revert_severity=body.revert_severity,
+                               name=body.name)
+    except Exception as exc:
+        log.warning("Issue update failed (%s)", config.redact(exc))
+        raise HTTPException(503, "Could not update the issue") from None
+    if record is None:
+        raise HTTPException(404, "Issue not found")
+    return _issue(record)
+
+
 @app.get("/api/issues/{id}/similar", response_model=list[SimilarIssue])
 def similar_issues(id: str):
     issue = _require_issue(id)
@@ -372,7 +429,15 @@ def frame(issue_id: str):
 
 @app.get("/api/report", response_model=Report | None)
 def latest_report():
-    return store.latest_report()
+    result = store.latest_report()
+    if result is None:
+        return None
+    # Names are an operator overlay that can change after the report was written: show the current ones.
+    names = {i.id: i.name for i in store.canonical_issues()}
+    for row in [*result.priorities, *(row for section in result.sections for row in section.top)]:
+        if row.id in names:
+            row.name = names[row.id]
+    return result
 
 
 @app.post("/api/report", response_model=Report)
@@ -386,6 +451,11 @@ async def regenerate_report():
     return result
 
 
+class ScenarioRef(BaseModel):
+    recommendation_id: str
+    scenario_id: str
+
+
 class DispatchRequest(BaseModel):
     # Older consoles send only `crews` (trucks per crew type, shared over the sites by workload).
     crews: dict[Crew, Annotated[int, Field(ge=0)]] = {}
@@ -394,6 +464,11 @@ class DispatchRequest(BaseModel):
     days: Annotated[int, Field(ge=1, le=7)] = 1
     min_severity: Annotated[int, Field(ge=1, le=5)] = 1        # the severity floor: plan S{n} and worse
     triage: bool = True                                         # False: rules only, no Nemotron call
+    # Apply a recommendation scenario: reuses its solved routes while fresh, else plans its settings.
+    scenario: ScenarioRef | None = None
+    # Focus: only jobs inside these zones (ids from /api/zones) and/or this drawn ring are planned.
+    zones: list[str] | None = None
+    polygon: Annotated[list[tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]], Field(max_length=200)] | None = None
 
 
 @app.post("/api/dispatch", response_model=Plan)
@@ -403,7 +478,9 @@ async def dispatch_crews(request: DispatchRequest):
             raise RuntimeError("dispatch module unavailable")
         result = Plan.model_validate(await _invoke(
             dispatch.plan, request.crews, sites=request.sites, days=request.days,
-            min_severity=request.min_severity, triage=request.triage))
+            min_severity=request.min_severity, triage=request.triage,
+            scenario=(request.scenario.recommendation_id, request.scenario.scenario_id) if request.scenario else None,
+            zones=request.zones, polygon=request.polygon))
     except Exception as exc:
         log.warning("Dispatch failed (%s); using fallback", config.redact(exc))
         result = await _dispatch_plan(request.crews)
@@ -413,6 +490,44 @@ async def dispatch_crews(request: DispatchRequest):
     except Exception as exc:
         log.warning("schedule_regen failed (%s)", config.redact(exc))
     return result
+
+
+class RecommendRequest(BaseModel):
+    days: Annotated[int, Field(ge=1, le=7)] = 1
+    min_severity: Annotated[int, Field(ge=1, le=5)] = 3
+    sites: dict[str, dict[Crew, Annotated[int, Field(ge=0, le=20)]]] | None = None
+    agent: bool = True                                          # False: rules propose and pick (cuOpt still solves)
+    zones: list[str] | None = None
+    polygon: Annotated[list[tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]], Field(max_length=200)] | None = None
+
+
+@app.post("/api/dispatch/recommend", response_model=Recommendation)
+async def recommend_workforce(request: RecommendRequest):
+    """Nemotron proposes workforce scenarios, cuOpt solves each, Nemotron picks one; code validates."""
+    try:
+        recommend = importlib.import_module("app.planning.recommend")
+        return await recommend.recommend(request.days, request.min_severity, request.sites, request.agent,
+                                         request.zones, request.polygon)
+    except Exception as exc:
+        log.warning("Recommendation failed (%s)", config.redact(exc))
+        raise HTTPException(503, "Recommendation unavailable") from None
+
+
+@app.get("/api/dispatch/recommend/progress")
+def recommendation_progress():
+    """{running, stage, scenarios_done, scenarios_total, elapsed_s} while a recommendation runs."""
+    try:
+        return importlib.import_module("app.planning.recommend").progress()
+    except Exception:
+        return {"running": False}
+
+
+@app.get("/api/dispatch/recommend", response_model=Recommendation | None)
+def latest_recommendation():
+    try:
+        return importlib.import_module("app.planning.recommend").latest()
+    except Exception:
+        return None
 
 
 @app.get("/api/plan", response_model=Plan | None)
@@ -479,6 +594,50 @@ def remove_facility(facility_id: str):
 def reset_facilities():
     """Forget every site edit: the bundled City list again."""
     return list(_sites().reset())
+
+
+def _zones():
+    return importlib.import_module("app.planning.zones")
+
+
+class ZoneInput(BaseModel):
+    label: str | None = None
+    polygon: Annotated[list[tuple[Annotated[float, Field(ge=-90, le=90)], Annotated[float, Field(ge=-180, le=180)]]], Field(min_length=3, max_length=200)] | None = None
+
+
+@app.get("/api/zones", response_model=list[Zone])
+def list_zones():
+    """Planning zones: the City's 25 wards (Open Data) and areas drawn in the console."""
+    return list(_zones().load())
+
+
+@app.post("/api/zones", response_model=Zone)
+def add_zone(body: ZoneInput):
+    if not body.polygon:
+        raise HTTPException(422, "A zone needs a polygon of at least three points")
+    try:
+        return _zones().add(body.label or "Drawn area", body.polygon)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc).splitlines()[0][:200]) from None
+
+
+@app.put("/api/zones/{zone_id}", response_model=Zone)
+def update_zone(zone_id: str, body: ZoneInput):
+    try:
+        return _zones().update(zone_id, body.label, body.polygon)
+    except KeyError:
+        raise HTTPException(404, "No such drawn zone (wards are read-only)") from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc).splitlines()[0][:200]) from None
+
+
+@app.delete("/api/zones/{zone_id}")
+def remove_zone(zone_id: str):
+    try:
+        _zones().remove(zone_id)
+    except KeyError:
+        raise HTTPException(404, "No such drawn zone (wards are read-only)") from None
+    return {"removed": zone_id}
 
 
 @app.get("/api/geocode")

@@ -11,3 +11,23 @@ export const GLYPH: Record<CategoryId, string> = {
   waste: 'M4.5 7h15M10 7V4h4v3M6.5 7l1 13h9l1-13M10 11v5M14 11v5', // bin
 };
 export const ALERT_NOUN: Record<CategoryId, string> = { graffiti: 'Graffiti', markings: 'Worn markings', work_zone: 'Road block / work zone', pavement: 'Pothole / pavement', signage: 'Sign damage', waste: 'Garbage / dumping' };
+
+/** Operating-site glyphs (same 24-unit grid), drawn in a square badge so a site never reads as an issue pin. */
+export type SiteKind = 'transfer_station' | 'collection_yard' | 'road_yard' | 'cleaning_yard' | 'yard';
+export const SITE_GLYPH: Record<SiteKind, string> = {
+  transfer_station: 'M3 20V9l9-5 9 5v11M3 20h18M12 9v7M9 13l3 3 3-3', // shed with a drop-off arrow
+  collection_yard: 'M2 16V8h11v8M13 11h4l3 3v2h-7M2 16h2M8 16h7M6 18.5a1.5 1.5 0 1 0 0-.01M17 18.5a1.5 1.5 0 1 0 0-.01', // collection truck
+  road_yard: 'M3 18h18M5 18v-3a7 7 0 0 1 14 0v3M10 8V6h4v2M12 8v4', // hard hat
+  cleaning_yard: 'M15 3l-4 8M7 11h7l2 3-2 7H6l-1-7zM8 14v7M11 14v7', // broom
+  yard: 'M3 20V9l9-5 9 5v11M3 20h18M9 20v-6h6v6', // depot
+};
+export const SITE_NOUN: Record<SiteKind, string> = {
+  transfer_station: 'Transfer station', collection_yard: 'Collection yard', road_yard: 'Road operations yard', cleaning_yard: 'Street-cleaning yard', yard: 'Works yard',
+};
+/** CSS token per site kind, e.g. var(--site-road). */
+export const SITE_TOKEN: Record<SiteKind, string> = {
+  transfer_station: '--site-transfer', collection_yard: '--site-collection', road_yard: '--site-road', cleaning_yard: '--site-cleaning', yard: '--site-road',
+};
+export const ROUTE_TONES = 8;
+/** A stable truck colour token: --route-1 … --route-8. */
+export const routeToken = (n: number) => `--route-${(((n % ROUTE_TONES) + ROUTE_TONES) % ROUTE_TONES) + 1}`;

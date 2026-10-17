@@ -179,3 +179,29 @@ def _extract_json(reply: str, *, array: bool = False):
     if not isinstance(value, (dict, list) if array else dict):
         raise ValueError("Unexpected JSON value")
     return value
+
+
+# ---- Summaries and questions (app/ai/summaries.py, app/pipeline/ask.py) ----
+
+DRIVE_SUMMARY_PROMPT = """You write the one-paragraph summary a city maintenance supervisor reads for one dashcam drive.
+You get facts about this drive: streets it passes, its findings by category next to the fleet average per drive,
+its most severe findings with times (mm:ss) and streets, and its busiest stretch.
+Write 2 or 3 sentences, at most 60 words:
+- Lead with what sets this drive apart from the fleet (a category well above average, a severe hazard, a dense stretch).
+- Name at least one street and one time from the facts.
+- Use only the facts given. Never invent findings, streets, causes or repairs.
+- Do not open with "This video", "The video", "This drive" or "The drive". No markdown except **bold** on at most one phrase.
+Return JSON only: {"summary":"<two or three sentences>"}"""
+
+SEARCH_ANSWER_PROMPT = """An operator searched a city's dashcam footage in plain language. The VSS video index returned
+matching moments, each with a drive, a time (mm:ss), a caption, and the maintenance issues already logged there.
+Answer the search in 2 sentences, at most 45 words: what was found and where (drives and times), then how many matches
+are already logged as issues and how many are not. Use only the matches given; if they do not show what was searched
+for, say so plainly. No markdown.
+Return JSON only: {"answer":"<two sentences>"}"""
+
+ASK_PROMPT = """An operator is reviewing one dashcam drive and asks a question about it. Answer from the evidence only:
+captions the VSS video index wrote for 5-second segments (with times, mm:ss), and maintenance issues logged on this
+drive (time, category, severity 1-5, label). Answer in at most 3 sentences and cite times as mm:ss. If the evidence
+does not answer the question, say what it does show instead. Never invent objects, events, causes or repairs.
+Return JSON only: {"answer":"<at most three sentences>","times":[<seconds cited>]}"""

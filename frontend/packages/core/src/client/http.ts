@@ -1,6 +1,6 @@
 // REST adapter. Defaults match architecture §5 exactly; every path, header, timeout and field mapping
 // can be overridden by config, so a different backend usually needs config rather than code.
-import type { CrewCounts, Depot, Issue, LatLon, StageId, Video } from '../types';
+import type { CrewCounts, Depot, DispatchOptions, FacilityInput, Issue, LatLon, RecommendOptions, StageId, Video } from '../types';
 import { parse } from '../schema';
 import { ApiError, type Capabilities, type RaightwayClient, type UploadOptions } from './types';
 
@@ -8,6 +8,12 @@ export interface Endpoints {
   videos: string; video: string; issues: string; similar: string; frame: string;
   report: string; regenerateReport: string; dispatch: string; upload: string; run: string; search: string;
   hazards: string; directions: string;
+  /** POST: an operator-marked issue. */
+  createIssue: string;
+  /** PATCH: pin/unpin or operator severity. */
+  updateIssue: string;
+  /** Sites: GET/POST list, PUT/DELETE one, POST reset; address lookup; workforce recommendation. */
+  facilities: string; facility: string; facilitiesReset: string; geocode: string; recommend: string; recommendProgress: string; zones: string; zone: string;
   /** Optional: a playable file per video, e.g. "/api/videos/{id}/file". */
   videoFile: string | null;
 }
@@ -15,6 +21,9 @@ export const DEFAULT_ENDPOINTS: Endpoints = {
   videos: '/api/videos', video: '/api/videos/{id}', issues: '/api/issues', similar: '/api/issues/{id}/similar',
   frame: '/api/frames/{id}', report: '/api/report', regenerateReport: '/api/report', dispatch: '/api/dispatch',
   upload: '/api/videos', run: '/api/run', search: '/api/search', hazards: '/api/hazards', directions: '/api/directions', videoFile: '/api/videos/{id}/file',
+  createIssue: '/api/issues', updateIssue: '/api/issues/{id}',
+  facilities: '/api/facilities', facility: '/api/facilities/{id}', facilitiesReset: '/api/facilities/reset', geocode: '/api/geocode',
+  recommend: '/api/dispatch/recommend', recommendProgress: '/api/dispatch/recommend/progress', zones: '/api/zones', zone: '/api/zones/{id}',
 };
 
 /** Where the backend's dispatch starts and ends every route (backend/app/planning: DEPOT). */
@@ -35,7 +44,7 @@ export interface HttpClientConfig {
   /** Map a backend's free-text stage ("checking 3/6") onto a pipeline stage id. */
   stage?: (raw: unknown) => StageId | null;
   /** Reshape raw payloads before they are validated. Use for field renames or envelopes. */
-  transform?: Partial<Record<'videos' | 'video' | 'issues' | 'report' | 'plan' | 'similar' | 'search' | 'hazards' | 'directions', (raw: Raw) => Raw>>;
+  transform?: Partial<Record<'videos' | 'video' | 'issue' | 'issues' | 'report' | 'plan' | 'similar' | 'search' | 'hazards' | 'directions', (raw: Raw) => Raw>>;
   fetch?: typeof fetch;
   label?: string;
 }
@@ -88,7 +97,7 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
   };
   const withVideoUrl = (v: Video): Video => (ep.videoFile && !v.video_url ? { ...v, video_url: url(ep.videoFile, v.id) } : v);
 
-  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: false, frames: true, directions: true, ...config.capabilities };
+  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: false, frames: true, directions: true, markIssues: true, sites: true, recommend: true, zones: true, ...config.capabilities };
   return {
     id: 'http', label: config.label ?? 'API', capabilities: caps,
     async listVideos(signal) { const raw = (tx.videos ?? (x => x))(await request('GET', url(ep.videos), { signal })); return parse.videos((Array.isArray(raw) ? raw : []).map(normVideo)).map(withVideoUrl); },
@@ -103,7 +112,25 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
     async regenerateReport() { return parse.report((tx.report ?? (x => x))(await request('POST', url(ep.regenerateReport), { timeoutMs: slowTimeout }))); },
     // The backend re-reads the VAST index before it answers, so this can take tens of seconds.
     async run() { return withVideoUrl(parse.video(normVideo((tx.video ?? (x => x))(await request('POST', url(ep.run), { timeoutMs: slowTimeout }))))); },
-    async dispatch(crews: CrewCounts) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews }, timeoutMs: slowTimeout }))); },
+    async dispatch(crews: CrewCounts, opts: DispatchOptions = {}) { return parse.plan((tx.plan ?? (x => x))(await request('POST', url(ep.dispatch), { json: { crews, ...opts }, timeoutMs: slowTimeout }))); },
+    async listFacilities(signal) { return caps.sites ? parse.facilities(await request('GET', url(ep.facilities), { signal })) : []; },
+    async addFacility(input: FacilityInput) { return parse.facility(await request('POST', url(ep.facilities), { json: input })); },
+    async updateFacility(id: string, patch: FacilityInput) { return parse.facility(await request('PUT', url(ep.facility, id), { json: patch })); },
+    async removeFacility(id: string) { await request('DELETE', url(ep.facility, id)); },
+    async resetFacilities() { return parse.facilities(await request('POST', url(ep.facilitiesReset))); },
+    async geocode(query: string) { const raw = await request('GET', `${url(ep.geocode)}?q=${encodeURIComponent(query)}`, { allow404: true, timeoutMs: 20_000 }); return raw == null ? null : parse.geocode(raw); },
+    // Nemotron proposes and picks, cuOpt solves every scenario: up to a minute or two.
+    async recommend(opts: RecommendOptions) { return parse.recommendation(await request('POST', url(ep.recommend), { json: opts, timeoutMs: slowTimeout + 60_000 })); },
+    async listZones(signal) { return caps.zones ? parse.zones(await request('GET', url(ep.zones), { signal, allow404: true }) ?? []) : []; },
+    async addZone(label: string, polygon: LatLon[]) { return parse.zone(await request('POST', url(ep.zones), { json: { label, polygon } })); },
+    async updateZone(id: string, patch: { label?: string; polygon?: LatLon[] }) { return parse.zone(await request('PUT', url(ep.zone, id), { json: patch })); },
+    async removeZone(id: string) { await request('DELETE', url(ep.zone, id)); },
+    async recommendProgress(signal) {
+      const o = ((await request('GET', url(ep.recommendProgress), { signal, allow404: true })) ?? {}) as Record<string, unknown>;
+      const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+      return { running: Boolean(o.running), stage: typeof o.stage === 'string' ? o.stage : undefined, scenarios_done: n(o.scenarios_done), scenarios_total: n(o.scenarios_total), elapsed_s: n(o.elapsed_s) };
+    },
+    async latestRecommendation(signal) { const raw = caps.recommend ? await request('GET', url(ep.recommend), { signal, allow404: true }) : null; return raw == null ? null : parse.recommendation(raw); },
     async hazards(signal) { return caps.directions ? parse.hazards((tx.hazards ?? (x => x))(await request('GET', url(ep.hazards), { signal, allow404: true }))) : []; },
     async directions(origin: LatLon, destination: LatLon) { return parse.directions((tx.directions ?? (x => x))(await request('POST', url(ep.directions), { json: { origin, destination }, timeoutMs: 45_000 }))); },
     upload(file: File, opts: UploadOptions = {}) {
@@ -129,6 +156,9 @@ export function createHttpClient(config: HttpClientConfig = {}): RaightwayClient
       if (!caps.topicSearch) return [];
       return parse.topicHits((tx.search ?? (x => x))(await request('POST', url(ep.search), { json: { query }, signal })));
     },
+    // Waits on ffmpeg, GPS, Nemotron and Cosmos-Embed1 on the backend (each best effort), so allow the slow timeout.
+    async createIssue(input) { return parse.issue((tx.issue ?? (x => x))(await request('POST', url(ep.createIssue), { json: input, timeoutMs: slowTimeout }))); },
+    async updateIssue(id, patch) { return parse.issue((tx.issue ?? (x => x))(await request('PATCH', url(ep.updateIssue, id), { json: patch }))); },
     frameUrl: (issue: Issue) => (caps.frames ? (issue.frame_url ? (/^https?:/.test(issue.frame_url) ? issue.frame_url : base + issue.frame_url) : url(ep.frame, issue.id)) : null),
     videoUrl: (video: Video) => video.video_url ?? null,
     depot: () => config.depot ?? DEFAULT_DEPOT,

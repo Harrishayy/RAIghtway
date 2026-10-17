@@ -50,7 +50,8 @@ export interface Issue {
   frame_seed?: number;
   /** UI extra: true while a live analysis has found but not yet confirmed it. */
   provisional?: boolean;
-  source?: 'upload' | 'corpus';
+  /** `manual` = marked by an operator on footage (POST /api/issues), never a model finding. */
+  source?: 'upload' | 'corpus' | 'manual';
   /** Demo rank from a manual review of the footage (1 shows first); absent for most issues. */
   featured?: number | null;
   /** Severity rating pass: one sentence on what the rater saw and why this grade. */
@@ -61,6 +62,10 @@ export interface Issue {
   verdict?: 'confirmed' | 'rejected' | null;
   /** The find pass's grade before re-grading. */
   find_severity?: number | null;
+  /** Include in the next plan: triage treats a pinned issue as must-do. Defaults to false. */
+  pinned?: boolean;
+  /** The operator's name for this issue (≤ 80 chars). Display with `issueLabel(i)`: name, else description. */
+  name?: string | null;
 }
 
 export interface AnalysisResult { found: number; merged: number; fresh: number }
@@ -129,6 +134,8 @@ export type Deadline = 'today' | 'this week' | 'this month' | 'routine';
 /** One finding as the report lists it. */
 export interface ReportIssue {
   id: string; category: CategoryId; severity: Severity; severity_reason?: string | null; description: string;
+  /** The operator's name for the issue, when set. */
+  name?: string | null;
   video_id: string; drive?: string | null; t: number; lat?: number | null; lon?: number | null;
   /** Nearest named street, when known. */
   place?: string | null;
@@ -162,12 +169,30 @@ export interface ReportProvenance {
 export interface ReportPayload { report: Report; updating: boolean }
 
 /** Where a crew type is based: a City transfer station for sanitation, a works yard for the rest. */
+export type FacilityKind = 'transfer_station' | 'collection_yard' | 'road_yard' | 'cleaning_yard' | 'yard';
+/** A City operating site crews leave from and return to (Sites tab). */
 export interface Facility {
-  id: string; label: string; kind: 'transfer_station' | 'yard'; crews: CrewType[];
+  id: string; label: string; kind: FacilityKind; crews: CrewType[];
   lat: number; lon: number; address?: string | null; source: string;
   /** A stand-in location, not a confirmed site. */
   assumed?: boolean;
+  /** The public page that names the site. */
+  source_url?: string | null;
+  note?: string | null;
+  /** Added in the console rather than bundled. */
+  custom?: boolean;
+  /** Trucks the site sends out each day, per crew type. */
+  vehicles?: Partial<Record<CrewType, number>>;
 }
+/** A planning area: an official City ward or one drawn in the console. Rings of [lat, lon]. */
+export interface Zone {
+  id: string; label: string; kind: 'ward' | 'custom'; polygons: LatLon[][]; source: string;
+  source_url?: string | null; code?: number | null; custom?: boolean;
+}
+/** Fields for POST/PUT /api/facilities. */
+export type FacilityInput = Partial<Pick<Facility, 'label' | 'kind' | 'crews' | 'lat' | 'lon' | 'address' | 'source' | 'source_url' | 'note' | 'vehicles'>>;
+/** POST /api/geocode result. */
+export interface GeocodeHit { lat: number; lon: number; label: string }
 /** A road that is closed, restricted or busy: a City of Toronto restriction or a work zone seen on camera. */
 export interface Hazard {
   id: string; source: 'city' | 'dashcam'; kind: string; label: string; lat: number; lon: number;
@@ -196,6 +221,58 @@ export interface Route {
   maps_urls?: string[];
   /** Plain-text run sheet to paste into a message to the crew. */
   brief?: string | null;
+  /** Round trips: day of the plan (1-based), the truck, its full shift and totals, and who ordered the stops. */
+  day?: number;
+  vehicle_id?: string | null;
+  schedule?: ScheduleEntry[];
+  totals?: ShiftTotals | null;
+  solver?: 'cuopt' | 'fallback' | null;
+}
+/** One line of a truck's shift, in minutes from 08:00. */
+export interface ScheduleEntry {
+  kind: 'depart' | 'job' | 'break' | 'return'; issue_id?: string | null; label: string; lat: number; lon: number;
+  drive_min: number; arrive_min: number; work_min: number; depart_min: number; idle_min: number;
+  severity?: number | null; pinned?: boolean;
+}
+export interface ShiftTotals {
+  drive_min: number; work_min: number; break_min: number; idle_min: number; distance_km?: number | null;
+  back_min: number; jobs: number;
+  /** solver: cuOpt placed the lunch break; reserved: added after (fallback router); none: back before lunch. */
+  lunch: 'solver' | 'reserved' | 'none';
+}
+export type TriageDecisionKind = 'today' | 'later' | 'defer';
+export interface TriageDecision { issue_id: string; crew: CrewType; severity: number; decision: TriageDecisionKind; reason: string; by: 'rule' | 'model'; pinned?: boolean }
+/** The day plan before routing: Nemotron, or the rules when no model answered (model "rules"). */
+export interface Triage {
+  model: string; model_name?: string | null; min_severity: number; days: number; rationale: string;
+  by_crew: Partial<Record<CrewType, string>>; capacity_min: Partial<Record<CrewType, number>>; clamped: number;
+  decisions: TriageDecision[];
+}
+export interface PlanDay { day: number; jobs: number; trucks: number; by_severity: Record<string, number>; drive_min: number; work_min: number; distance_km: number; last_back_min: number; solver: 'cuopt' | 'fallback' }
+export interface PlanSite { facility_id: string; label: string; kind: FacilityKind; trucks: Partial<Record<CrewType, number>>; jobs: number }
+/** Trucks per site per crew type per day. */
+export type SiteTrucks = Record<string, Partial<Record<CrewType, number>>>;
+export interface ScenarioMetrics {
+  jobs_selected: number; jobs_routed: number; s5_total: number; s5_covered: number; s4_total: number; s4_covered: number;
+  pinned_total: number; pinned_covered: number; drive_hours: number; work_hours: number;
+  /** Estimate: straight lines × 1.3 between the stops. */
+  distance_km: number; trucks_used: number; trucks_available: number; deferred: number;
+  unassigned_by_reason: Record<string, number>; solver: 'cuopt' | 'fallback'; triage: string; days: number; solve_ms: number;
+}
+export interface Scenario {
+  id: string; label: string; intent: string; source: 'baseline' | 'model' | 'rules' | 'refined';
+  min_severity: number; sites: SiteTrucks; trucks: Partial<Record<CrewType, number>>; clamped: string[];
+  /** Focus zones for this scenario ([] = the request's focus, or the whole city). */
+  zones?: string[];
+  metrics?: ScenarioMetrics | null; error?: string | null;
+}
+/** Nemotron proposes scenarios, cuOpt solves each, Nemotron (or the rules) picks; code validates. */
+export interface Recommendation {
+  id: string; generated_at: string; agent_model: string; agent_model_name?: string | null;
+  proposer: 'nemotron' | 'rules'; picker: 'nemotron' | 'rules'; recommended: string; rationale: string;
+  tradeoffs: string[]; priorities: string[]; scenarios: Scenario[]; matrix_source: 'road' | 'straight'; days: number;
+  refined: boolean; timings: Record<string, number>; caveats: string[];
+  zones?: string[]; zone_labels?: string[];
 }
 export interface Plan {
   routes: Route[];
@@ -208,7 +285,31 @@ export interface Plan {
   facilities?: Facility[];
   hazards?: Hazard[];
   matrix_source?: 'road' | 'straight';
+  /** Multi-day round trips after triage. */
+  min_severity?: number | null;
+  horizon_days?: number | null;
+  sites?: PlanSite[];
+  days?: PlanDay[];
+  triage?: Triage | null;
+  deferred?: string[];
+  pinned?: string[];
+  recommendation?: Recommendation | null;
+  scenario_id?: string | null;
+  /** Focus zones planned ([] = whole city), their names, and open jobs left out for being outside them. */
+  zones?: string[];
+  zone_labels?: string[];
+  outside_zone?: number;
 }
+/** POST /api/dispatch options beyond the legacy crew counts. */
+export interface DispatchOptions {
+  sites?: SiteTrucks; days?: number; min_severity?: number; triage?: boolean;
+  scenario?: { recommendation_id: string; scenario_id: string };
+  /** Plan only jobs inside these zones (ids) and/or this drawn ring. */
+  zones?: string[]; polygon?: LatLon[];
+}
+export interface RecommendOptions { days?: number; min_severity?: number; sites?: SiteTrucks; agent?: boolean; zones?: string[]; polygon?: LatLon[] }
+/** GET /api/dispatch/recommend/progress, polled while a recommendation runs. */
+export interface RecommendProgress { running: boolean; stage?: string; scenarios_done?: number; scenarios_total?: number; elapsed_s?: number }
 /** Best road path between two points, steering around closures (POST /api/directions). */
 export interface Directions {
   path: LatLon[]; minutes: number; distance_km: number; path_source: 'road' | 'straight';

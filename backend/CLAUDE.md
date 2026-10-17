@@ -33,7 +33,8 @@ app/vast/              db.py (VastDB tables, insert-only) · vector.py (ADBC cos
                        media.py (frames in VAST S3, or the frames table) · gatecheck.py
 app/pipeline/          piece.py (one 5 s piece → Detections) · dedupe.py (in-clip, then history) · live.py (uploads) ·
                        precompute.py (corpus sample) · run.py (Run: unseen VAST footage, live) ·
-                       segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py
+                       segment.py (ffmpeg) · replay.py (saved runs) · vss_client.py ·
+                       manual.py (operator-marked issues, pins, names and operator grades: overlay rows, never deduped)
 app/geo/               gps.py (PIE 1 Hz GPS) · inventory.py (segment → drive, t) · demo.py · roads.py (OSRM) · distance.py
 app/planning/          dispatch.py (per-category bases → one cuOpt solve) · cuopt.py · report.py · hazards.py
                        (city closures + dashcam work zones) · paths.py (detours) · facilities.py/.json

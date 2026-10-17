@@ -100,6 +100,9 @@ Environment facts were checked on 16 Oct against the guide repo, the `vss-bluepr
 | `reports` | generated_at, summary, counts, crews, rationale |
 | `plans` | generated_at, crews, routes (JSON), unassigned, solver, solve_ms |
 | `frames` | Fallback only: issue_id, jpeg (binary) |
+| `ratings` | issue_id, severity, find_severity, reason, model, verdict, observed, rated_at: severity overlay (model graders and `operator`), newest per issue wins |
+| `pins` | issue_id, pinned (0/1), by, pinned_at: "include in the next plan" overlay, newest per issue wins; issue rows are never rewritten |
+| `names` | issue_id, name, by, named_at: the operator's name for an issue, newest per issue wins, `""` clears it |
 
 SDK rules (from the skills and the blueprint):
 - **Vector column:** `pa.list_(pa.field("item", pa.float32(), nullable=False), 256)`, as in `vss-collection`.
@@ -208,9 +211,12 @@ If it runs long: use a shorter clip and lower max_tokens, and narrate over the p
 - **Hosted API (build.nvidia.com sample):** `POST https://optimize.api.nvidia.com/v1/nvidia/cuopt` with `Authorization: Bearer $NVIDIA_API_KEY` and `Accept: application/json`; body `{"action": "cuOpt_OptimizedRouting", "data": {...}, "client_version": ""}`. A 202 means poll `GET https://optimize.api.nvidia.com/v1/status/{NVCF-REQID}` (from the response header) until it returns 200. Large requests need NVCF's asset upload, so keep to about 100 jobs with integer-minute matrices. The hosted solver is marked non-commercial use only.
 - **Categorise, then route each category from its own bases** (`backend/app/planning/`):
   - The pipeline's structured output is normalised onto the six categories (`prompts.normalise_category`: "pothole" → pavement, "garbage"/"trash" → waste, "construction"/"cones" → work_zone, …), so a model or upstream label that isn't an exact category name is kept rather than dropped.
-  - Each crew type has bases in `facilities.json`. **Sanitation uses the City's seven transfer stations** (Toronto Open Data, *Transfer Station Locations*). Roads (potholes), graffiti, markings, signage and inspection use works yards, which are **assumed points, labelled as such**. Set `FACILITIES_FILE` to swap the list.
-  - Every job is assigned to the nearest base of its crew type. A crew type's vehicles are split across its bases by workload (largest remainder, at least one each). With fewer vehicles than bases in use, the busiest bases stay open and the rest fold into them.
-- **One multi-depot problem per crew type**, solved concurrently, each under the hosted cap of about 100 jobs:
+  - **Sites** (`facilities.json`, 21 real City of Toronto sites, each with an address and a source URL): 7 Solid Waste transfer stations, 3 Solid Waste collection yards, 9 Transportation Services road-operations yards (Toryork hosts Signs and Pavement Markings) and 2 street-cleaning yards. Only Morningside is `assumed` (the yard is listed, its address is not). Each site stores **trucks per day per crew type** (`Facility.vehicles`). The Sites tab adds, edits and removes sites: edits live in `state/facilities.json` over the bundled list (atomic writes; `POST /api/facilities/reset` restores it). Set `FACILITIES_FILE` to swap the bundled list.
+  - Every job is assigned to the nearest site with a truck of its crew type. (An older request with only `crews` shares those trucks over the sites by workload, as before.)
+  - **Triage before routing** (`triage.py`): Nemotron Ultra (W&B Inference, traced in Weave) proposes today / later / defer per job with a reason; code keeps the hard rules: the user's severity floor, crews with no trucks, severity 5 and operator-pinned jobs today, S4 never deferred while there is room, today's minutes within capacity, routine jobs today only next to other work. Rules decide when the model doesn't answer; `Plan.triage.model` says which.
+  - **Round trips over days:** every truck leaves its site at 08:00, is back by 16:00, takes a 30-minute lunch (a cuOpt vehicle break between 11:30 and 13:00, at a job site), and severity 5 jobs have a start window before noon. Day by day, (crew type, site group) units are packed into problems of at most 100 jobs; what a day can't fit rolls into the next. Each route carries its day, the full `schedule` (leave, drive / arrive / work / leave per stop, lunch, back) and `totals`. The fallback router reserves lunch after the job nearest 11:30.
+  - **Workforce recommendation** (`recommend.py`, `POST /api/dispatch/recommend`): Nemotron proposes 2–4 scenarios (trucks per site per crew, floor), code clamps them and adds the current settings; every scenario is triaged (rules) and solved by cuOpt over one shared set of street matrices within a 30 s budget and scored in code; Nemotron picks one from the scored table (one refinement round allowed) and code validates the pick (pinned and S5 coverage, then S4, then drive hours per job). Rules propose and pick with no model; the fallback router evaluates with no cuOpt. "Apply and plan" reuses the scenario's solved routes while the backlog and sites are unchanged (15 minutes).
+- **Multi-depot problems** (crew types packed together; each vehicle only takes its own crew's jobs), solved concurrently (3 at a time), each under the hosted cap of about 100 jobs:
   - `cost_matrix_data` and `travel_time_matrix_data` are `{"data": {"0": M}}`, where M holds integer driving minutes between the bases in use and the jobs. These come from the OSRM table API (`ROUTING_URL`, default the public demo server), one table per base cluster when there are more than 100 points. The haversine estimate (× 1.3 ÷ 25 km/h) fills in when OSRM is off or unreachable. `Plan.matrix_source` says which was used.
   - `fleet_data`: `vehicle_locations` `[[b, b], …]` (each vehicle starts and ends at its base), `vehicle_ids` (`sanitation-1`, …) and `vehicle_time_windows` `[[0,480], …]`.
   - `task_data` has `task_locations`, `task_ids`, `service_times` (work-order minutes), `order_vehicle_match` (each job → **only the vehicles at its nearest base**, so every run stays local) and `prizes` (from severity, so the least important jobs drop first when shifts are full).
@@ -259,6 +265,13 @@ class Issue(BaseModel):
     verdict: Literal["confirmed","rejected"] | None = None   # rejected = not a real defect; kept, never deleted,
                                                        # left out of report counts, dispatch and dashcam hazards
     find_severity: int | None = None                   # the find pass's grade before re-grading
+    # operator input, optional:
+    source: Literal["upload","corpus","manual"] | None = None   # manual = marked by an operator on footage
+                                                       # (POST /api/issues); severity_model "operator"; never deduped
+    pinned: bool = False                               # include in the next plan; triage treats it as must-do
+    name: str | None = None                            # operator's name for the issue (≤ 80 chars, a `names` overlay row);
+                                                       # canonical: the newest name among its sightings. UI label:
+                                                       # issueLabel(i) = name ?? description
 class Video(BaseModel):
     id: str; filename: str; source: Literal["upload","corpus"]
     status: Literal["queued","analysing","done","failed"]; progress: float; stage: str | None = None
@@ -283,18 +296,27 @@ class Report(BaseModel):    generated_at: datetime; summary: str; counts: dict[s
                                                        # back_first, back_last}], sites [{label, kind, trucks per crew, jobs}],
                                                        # triage_model, today/later/deferred + decisions with reasons,
                                                        # unassigned with reasons, note (Nemotron); None = no plan yet
-class ReportIssue:          id, category, severity, severity_reason, description, video_id, drive, t, lat, lon,
+class ReportIssue:          id, category, severity, severity_reason, description, name (current), video_id, drive, t, lat, lon,
                             place (nearest street), sightings, confidence, deadline ("today"|"this week"|"this month"|
                             "routine"), crew, repair, minutes
 class Route(BaseModel):     crew_id: str; crew: Crew; stops: list[str]; eta_min: list[int]; path: list[tuple[float, float]]
     # optional extras: facility_id, depot, depot_label, distance_km, path_source ("road"|"straight"),
-    # warnings: list[RouteWarning], maps_urls, brief (plain-text run sheet)
+    # warnings: list[RouteWarning], maps_urls, brief (plain-text run sheet),
+    # day (1-based), vehicle_id (crew_id is unique per day: "roads-2/d2"), schedule: list[ScheduleEntry]
+    # (kind depart|job|break|return, issue_id, label, lat, lon, drive_min, arrive_min, work_min, depart_min,
+    # idle_min, severity, pinned), totals: ShiftTotals (drive_min, work_min, break_min, idle_min, distance_km,
+    # back_min, jobs, lunch "solver"|"reserved"|"none"), solver
 class Plan(BaseModel):      routes: list[Route]; unassigned: list[str]; solver: Literal["cuopt","fallback"]; solve_ms: int
-    # optional extras: unassigned_reasons, facilities: list[Facility], hazards: list[Hazard], matrix_source
+    # optional extras: unassigned_reasons, facilities: list[Facility], hazards: list[Hazard], matrix_source,
+    # min_severity, horizon_days, sites: list[PlanSite] (trucks per crew per day, jobs), days: list[PlanDay],
+    # triage: Triage (model, rationale, by_crew, capacity_min, clamped, decisions[issue_id, decision, reason, by,
+    # pinned]), deferred, pinned, recommendation: Recommendation, scenario_id (see the Plan docstring in models.py)
     # solver is "fallback" whenever cuOpt failed; the console shows it, so a fallback is never passed off as cuOpt
 class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0 = identical
                             search: Literal["vastdb","local"] # VastDB ADBC answered, or the in-memory numpy fallback
-# Facility, Hazard, RouteWarning and Directions: see backend/app/models.py (dispatch and road alerts)
+# Facility (kind transfer_station|collection_yard|road_yard|cleaning_yard|yard; extras source_url, note, custom,
+# vehicles: trucks per day per crew type), Hazard, RouteWarning, Directions, Recommendation, Scenario,
+# ScenarioMetrics: see backend/app/models.py (dispatch, sites and road alerts)
 ```
 
 ## 5. API
@@ -305,13 +327,19 @@ class SimilarIssue(Issue):  distance: float | None = None   # cosine distance, 0
 | `GET /api/videos` | `Video[]`, including live progress and stage (polled) |
 | `GET /api/videos/{id}` | `{video: Video, issues: Issue[]}`, including re-sightings |
 | `GET /api/issues` | Canonical `Issue[]` for the map, including provisional ones from a running analysis |
+| `POST /api/issues` `{video_id, t, category, severity, description, bbox?, pinned, name?}` | `Issue` with `source: "manual"`, `severity_model: "operator"`, `verdict: "confirmed"`. Best effort, never fails on a model: keyframe from the playable file at `t` (ffmpeg → `state/frames`, VAST S3), lat/lon from PIE GPS at `start_s + t`, work order from Nemotron Lightning (template fallback), Cosmos-Embed1 vector for similar issues. No `bbox`: the whole frame. Never deduped. 404 for an unknown video |
+| `PATCH /api/issues/{id}` `{pinned?, severity?, revert_severity?, name?}` | `Issue`. Pin or unpin (a `pins` row), name it (a `names` row; trimmed to 80 chars, `""` clears), set an operator severity (a `ratings` row, `model: "operator"`), or undo it (back to the model's grade). Reversible overlays; issue rows are never rewritten |
 | `GET /api/issues/{id}/similar` | `SimilarIssue[]` (top 5) for the issue panel: VastDB vector search, with `distance` and which index answered (`search`) |
 | `POST /api/search` `{query}` | `{query, hits: [{video_id, start, end, score, similarity, caption}], search: "vss", synthesis, cached}`: plain-language footage search over the VSS index (`pie_cam-3`). Each VSS 5 s segment maps through the inventory to a listed corpus drive; touching segments merge into one band; weak hits (below 0.1, or 0.6 × the best) are dropped. `score` is the rank (1 = best), `similarity` the raw VSS score, `caption` the sentence of VSS's caption closest to the query, `synthesis` VSS's LLM answer over the top 3 clips. 422 on a query outside 3–200 characters; 503 when VSS is down or busy (no fallback). Cached per query in `state/vss_search_cache.json` |
 | `GET /api/frames/{issue_id}` | JPEG, from the VM disk cache, else VAST S3 (or the `frames` table in the fallback) |
 | `GET /api/report` | Latest `Report` (instant) |
 | `POST /api/report` | Regenerates the report → `Report` |
-| `POST /api/dispatch` `{crews: {...}}` | `Plan` |
-| `GET /api/facilities` | `Facility[]`: the base each crew type starts from |
+| `POST /api/dispatch` `{crews?, sites?, days?, min_severity?, triage?, scenario?}` | `Plan`. `sites`: site id → crew → trucks per day (default: what the sites store); `days` 1–7; `min_severity` the floor; `triage: false` skips Nemotron; `scenario: {recommendation_id, scenario_id}` applies a recommendation (reusing its solved routes while fresh). Older `{crews}` requests still work. Saved as the latest plan; the report regenerates |
+| `GET /api/plan` | The latest `Plan`, or null |
+| `POST /api/dispatch/recommend` `{days?, min_severity?, sites?, agent?}` | `Recommendation`: scenarios with settings and cuOpt-scored metrics, the pick, rationale, `agent_model`, timings. `GET` returns the latest; `GET /api/dispatch/recommend/progress` → `{running, stage, scenarios_done, scenarios_total, elapsed_s}` for the button |
+| `GET /api/facilities` | `Facility[]`: City sites with crews and trucks per day |
+| `POST /api/facilities`, `PUT /api/facilities/{id}`, `DELETE /api/facilities/{id}`, `POST /api/facilities/reset` | Add (`label, kind, crews, lat, lon` required), edit (any field, e.g. `vehicles`), remove (a bundled site is remembered as removed), restore the bundled list. 422 outside Toronto or without crews |
+| `GET /api/geocode?q=` | `{lat, lon, label}` for an address in Toronto (OSM Nominatim, 1 request a second, cached); 404 no match |
 | `GET /api/hazards` | `Hazard[]`: city road restrictions plus dashcam work zones near bases and open jobs |
 | `POST /api/directions` `{origin, destination}` | `Directions`: road path around closures |
 | `GET /api/health` | `{ok, store_source}` |

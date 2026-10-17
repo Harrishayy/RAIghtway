@@ -1,7 +1,7 @@
 """Data contract (architecture.md §4) plus internal records (agents/README.md).
 
 Everything above "Internal records" goes to the UI. Internal records never do:
-strip `source`, `frame_key`, `created_at` and `embedding` before returning them.
+strip `frame_key`, `created_at` and `embedding` before returning them (`source` is now on Issue too).
 """
 from datetime import datetime
 from typing import Literal
@@ -51,6 +51,10 @@ class Issue(BaseModel):
                                                       # None = the find pass's severity, never re-graded
     verdict: Literal["confirmed", "rejected"] | None = None   # rejected = not a real defect (kept, not deleted)
     find_severity: int | None = None                  # the find pass's original severity, when re-graded
+    # Operator input: an issue marked by hand on footage, and pins that put an issue in the next plan.
+    source: Literal["upload", "corpus", "manual"] | None = None   # manual = operator-reported, not model-found
+    pinned: bool = False                              # include in the next plan (dispatch treats it as must-do)
+    name: str | None = None                           # operator's name for this issue (≤ 80 chars); an overlay row
 
 
 class SimilarIssue(Issue):                            # GET /api/issues/{id}/similar
@@ -69,8 +73,45 @@ class Video(BaseModel):
     start_s: float = 0
     duration_s: float = 0
     explanation: str | None = None
+    explanation_source: Literal["nemotron", "template"] | None = None   # who wrote it; template = Nemotron failed
     issue_ids: list[str] = []
     track: list[tuple[float, float]] = []
+
+
+class TopicHit(BaseModel):                            # POST /api/search: one VSS match on a drive
+    video_id: str
+    start: float
+    end: float
+    score: float                                      # rank within this answer, 1 = best
+    similarity: float                                 # VSS similarity_score of the band's best segment
+    caption: str                                      # the VSS caption sentence closest to the query
+
+
+class TopicSearch(BaseModel):                         # POST /api/search
+    query: str
+    hits: list[TopicHit]
+    search: Literal["vss"] = "vss"                    # which index answered; there is no fallback
+    synthesis: str = ""                               # VSS's own LLM answer over its top clips
+    answer: str = ""                                  # Nemotron's answer from the hits and the issues logged there
+    answer_source: Literal["nemotron"] | None = None  # None: no answer (VSS synthesis only)
+    logged: int = 0                                   # matches that overlap an issue already logged
+    cached: bool = False
+
+
+class AskEvidence(BaseModel):                         # one piece of footage evidence behind an answer
+    start: float
+    end: float
+    caption: str
+    kind: Literal["segment", "search"]                # segment: VSS caption at the playhead; search: a VSS hit
+
+
+class AskAnswer(BaseModel):                           # POST /api/videos/{id}/ask
+    question: str
+    answer: str
+    source: Literal["nemotron", "vss"]                # vss: Nemotron failed, the answer quotes VSS captions
+    times: list[float] = []                           # moments the answer cites, seconds on this video
+    evidence: list[AskEvidence] = []
+    issue_ids: list[str] = []                         # logged issues the answer drew on
 
 
 class ReportIssue(BaseModel):
@@ -80,6 +121,7 @@ class ReportIssue(BaseModel):
     severity: int
     severity_reason: str | None = None
     description: str
+    name: str | None = None                           # operator's name for the issue, when set
     video_id: str
     drive: str | None = None
     t: float = 0                                      # seconds from the start of the video
@@ -257,6 +299,19 @@ class Facility(BaseModel):
     vehicles: dict[Crew, int] = {}
 
 
+class Zone(BaseModel):
+    """A planning area: an official City ward, or one drawn in the console. Polygons are outer rings of
+    (lat, lon) points; a point inside any of them is inside the zone."""
+    id: str
+    label: str
+    kind: Literal["ward", "custom"]
+    polygons: list[list[tuple[float, float]]]
+    source: str
+    source_url: str | None = None
+    code: int | None = None                           # ward number
+    custom: bool = False
+
+
 class Hazard(BaseModel):
     """A road that is closed, restricted or busy: a city closure or a work zone seen on camera."""
     id: str
@@ -314,6 +369,7 @@ class ScheduleEntry(BaseModel):
     depart_min: int
     idle_min: int = 0                                 # waiting before this point (early arrival)
     severity: int | None = None
+    pinned: bool = False                              # the operator pinned this job: must-do
 
 
 class ShiftTotals(BaseModel):
@@ -337,6 +393,7 @@ class TriageDecision(BaseModel):
     decision: Literal["today", "later", "defer"]      # today: day 1; later: within the plan's days; defer: not planned
     reason: str
     by: Literal["rule", "model"]                      # rule: a hard rule in code decided (or overrode the model)
+    pinned: bool = False                              # pinned by the operator: today, whatever the floor
 
 
 class Triage(BaseModel):
@@ -392,6 +449,11 @@ class Plan(BaseModel):
                                         schedule[] (depart/job/break/return lines), totals (ShiftTotals: jobs,
                                         drive_min, work_min, break_min, idle_min, distance_km, back_min, lunch)
       unassigned, unassigned_reasons    planned jobs no truck reached, and why
+      pinned                            operator-pinned issue ids (triage puts them today; schedule lines say pinned)
+      recommendation, scenario_id       the latest Recommendation (Nemotron + cuOpt scenarios, see below) and,
+                                        when this plan applied one of its scenarios, that scenario's id
+      zones, zone_labels, outside_zone  the focus zones planned (empty = whole city) and how many open jobs fell
+                                        outside them; pinned jobs outside are deferred "Pinned, outside focus zone"
     """
     routes: list[Route]
     unassigned: list[str]
@@ -408,6 +470,79 @@ class Plan(BaseModel):
     days: list[PlanDay] = []
     triage: Triage | None = None
     deferred: list[str] = []                          # triaged out: not planned in this horizon (reasons in triage)
+    pinned: list[str] = []                            # operator-pinned issues in this plan's backlog
+    recommendation: "Recommendation | None" = None    # the latest Nemotron + cuOpt recommendation when planned
+    scenario_id: str | None = None                    # set when this plan applied a recommendation scenario
+    zones: list[str] = []                             # focus zones (ward ids, drawn zone ids, "drawn"); [] = whole city
+    zone_labels: list[str] = []
+    outside_zone: int = 0                             # open jobs left out because they are outside the focus zones
+
+
+class ScenarioMetrics(BaseModel):
+    """What a scenario achieves, computed in code from its solved routes."""
+    jobs_selected: int                                # after triage
+    jobs_routed: int
+    s5_total: int
+    s5_covered: int
+    s4_total: int
+    s4_covered: int
+    pinned_total: int = 0
+    pinned_covered: int = 0
+    drive_hours: float
+    work_hours: float
+    distance_km: float                                # estimate: straight lines x 1.3 between the stops
+    trucks_used: int
+    trucks_available: int
+    deferred: int
+    unassigned_by_reason: dict[str, int] = {}
+    solver: Literal["cuopt", "fallback"]
+    triage: str = "rules"                             # who triaged inside the scenario
+    days: int = 1                                     # days evaluated
+    solve_ms: int = 0
+
+
+class Scenario(BaseModel):
+    """One candidate workforce: trucks per site per crew type per day, and a severity floor."""
+    id: str
+    label: str
+    intent: str
+    source: Literal["baseline", "model", "rules", "refined"]
+    min_severity: int
+    sites: dict[str, dict[Crew, int]]                 # site id -> crew type -> trucks per day (every day)
+    trucks: dict[Crew, int] = {}                      # totals per crew type
+    clamped: list[str] = []                           # what code changed in the proposal, and why
+    zones: list[str] = []                             # focus zones for this scenario ([] = the request's, or all)
+    metrics: ScenarioMetrics | None = None
+    error: str | None = None                          # not evaluated (time budget, failure)
+
+
+class Recommendation(BaseModel):
+    """Nemotron proposes scenarios, cuOpt solves each, Nemotron picks one from the scored table; code validates.
+
+    Fields for readers such as the report: agent_model ("nemotron-ultra", ... or "rules"), proposer and
+    picker ("nemotron" or "rules"), recommended (a scenario id), rationale, tradeoffs, scenarios[] with
+    settings and metrics, matrix_source, days, timings (seconds per step)."""
+    id: str
+    generated_at: datetime
+    agent_model: str
+    agent_model_name: str | None = None
+    proposer: Literal["nemotron", "rules"]
+    picker: Literal["nemotron", "rules"]
+    recommended: str
+    rationale: str
+    tradeoffs: list[str] = []
+    priorities: list[str] = []                        # crew types and areas to prioritise
+    scenarios: list[Scenario]
+    matrix_source: Literal["road", "straight"]
+    days: int
+    refined: bool = False
+    timings: dict[str, float] = {}
+    caveats: list[str] = []
+    zones: list[str] = []                             # the request's focus zones ([] = whole city)
+    zone_labels: list[str] = []
+
+
+Plan.model_rebuild()
 
 
 class Directions(BaseModel):
@@ -424,11 +559,13 @@ class Directions(BaseModel):
 # ---- Internal records (never sent to the UI) ----
 
 class IssueRecord(Issue):
-    source: Literal["upload", "corpus"]
+    source: Literal["upload", "corpus", "manual"]     # manual: marked by an operator (POST /api/issues)
     frame_key: str                                    # S3 key, or "db:{id}" in the frames-table fallback
     created_at: datetime
     embedding: list[float] | None = None              # 256-d; stripped before returning to the UI
     rated_at: datetime | None = None                  # when the severity rating last changed
+    pinned_at: datetime | None = None                 # when the pin last changed (pins are an overlay, like ratings)
+    named_at: datetime | None = None                  # when the operator name last changed (names overlay)
 
 
 class VideoRecord(Video):

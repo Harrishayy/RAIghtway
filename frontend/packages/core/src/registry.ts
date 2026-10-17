@@ -78,6 +78,7 @@ export const RATERS: Record<string, RaterDef> = {
   'nemotron-lightning': { id: 'nemotron-lightning', name: 'Nemotron 3.5 Lightning', vendor: 'NVIDIA via W&B', fallback: true },
   template: { id: 'template', name: 'Application template', vendor: 'no model', fallback: true },
   review: { id: 'review', name: 'Manual review', vendor: 'human', fallback: false },
+  operator: { id: 'operator', name: 'Operator', vendor: 'human', fallback: false },
   rules: { id: 'rules', name: 'Rules in code', vendor: 'no model', fallback: true },
 };
 export const raterDef = (id: string | null | undefined): RaterDef | null =>

@@ -26,6 +26,9 @@ _cutoff: datetime | None = None
 _source = "empty"
 _writes: Queue = Queue()
 RATINGS_FILE = "ratings.jsonl"     # append-only log of severity ratings, mirrored to the VastDB `ratings` table
+PINS_FILE = "pins.jsonl"           # append-only log of pins ("include in the next plan"), mirrored to VastDB `pins`
+NAMES_FILE = "names.jsonl"         # append-only log of operator names for issues, mirrored to VastDB `names`
+NAME_MAX = 80
 _worker: Thread | None = None
 
 
@@ -142,8 +145,8 @@ def _latest_ratings(rows: list[dict]) -> dict[str, dict]:
     return latest
 
 
-def _read_rating_log() -> list[dict]:
-    path = Path(config.STATE_DIR) / RATINGS_FILE
+def _read_rating_log(name: str = RATINGS_FILE) -> list[dict]:
+    path = Path(config.STATE_DIR) / name
     rows = []
     try:
         for line in path.read_text().splitlines():
@@ -160,11 +163,11 @@ def _read_rating_log() -> list[dict]:
     return rows
 
 
-def append_rating_log(rows: list[dict]) -> None:
+def append_rating_log(rows: list[dict], name: str = RATINGS_FILE) -> None:
     """Append rating rows to state/ratings.jsonl (sync; safe to call from a script with the API running)."""
     if not rows:
         return
-    path = Path(config.STATE_DIR) / RATINGS_FILE
+    path = Path(config.STATE_DIR) / name
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
         for row in rows:
@@ -198,6 +201,134 @@ def apply_ratings(rows: list[dict], persist: bool = True) -> int:
                 log.warning("Rating log write failed (%s)", config.redact(exc))
             _snapshot()
             _enqueue("insert_ratings", [dict(r) for r in rows])
+    return applied
+
+
+# ---- Pins: "include in the next plan", an overlay on insert-only issue rows ----
+# A pin row is {issue_id, pinned, by, pinned_at}; the newest one per issue wins, so unpinning is just a newer row.
+# Rows go to state/pins.jsonl and the VastDB `pins` table, like ratings; issue rows are never rewritten.
+
+def _pinned_at(row: dict) -> datetime | None:
+    return _rated_at({"rated_at": row.get("pinned_at")})
+
+
+def pin_row(issue_id: str, pinned: bool, by: str = "operator", when: datetime | None = None) -> dict:
+    return {"issue_id": issue_id, "pinned": bool(pinned), "by": by,
+            "pinned_at": (when or datetime.now(timezone.utc)).isoformat()}
+
+
+def apply_pin_row(issue: IssueRecord, row: dict) -> bool:
+    """Apply one pin row in place unless the issue already holds a newer one."""
+    when = _pinned_at(row)
+    if when is None or (issue.pinned_at is not None and _utc(issue.pinned_at) > when):
+        return False
+    issue.pinned, issue.pinned_at = bool(row.get("pinned")), when
+    return True
+
+
+def _latest_pins(rows: list[dict]) -> dict[str, dict]:
+    latest: dict[str, dict] = {}
+    for row in rows:
+        when, id = _pinned_at(row), row.get("issue_id")
+        if when is None or not id:
+            continue
+        if id not in latest or _pinned_at(latest[id]) <= when:
+            latest[id] = row
+    return latest
+
+
+def _load_pins() -> list[dict]:
+    rows = _read_rating_log(PINS_FILE)
+    try:
+        rows += importlib.import_module("app.vast.db").load_pins()
+    except Exception as exc:
+        log.warning("VastDB pins unavailable (%s); using the local pin log", config.redact(exc))
+    return rows
+
+
+def apply_pins(rows: list[dict], persist: bool = True) -> int:
+    """Apply pin rows to the live store; persist them to the log, VastDB and the snapshot. Returns how many applied."""
+    applied = 0
+    with _lock:
+        for row in rows:
+            for table in (_issues, _saved_issues):
+                issue = table.get(row.get("issue_id"))
+                if issue is not None and apply_pin_row(issue, row) and table is _issues:
+                    applied += 1
+        if persist and rows:
+            try:
+                append_rating_log(rows, PINS_FILE)
+            except Exception as exc:
+                log.warning("Pin log write failed (%s)", config.redact(exc))
+            _snapshot()
+            _enqueue("insert_pins", [dict(r) for r in rows])
+    return applied
+
+
+# ---- Names: an operator's name for an issue, an overlay like pins ----
+# A name row is {issue_id, name, by, named_at}; the newest one per issue wins and an empty name clears it.
+# Rows go to state/names.jsonl and the VastDB `names` table; issue rows are never rewritten.
+
+def clean_name(value) -> str | None:
+    """Trimmed, whitespace-collapsed, at most NAME_MAX characters; None when empty."""
+    text = " ".join(str(value or "").split())[:NAME_MAX].strip()
+    return text or None
+
+
+def _named_at(row: dict) -> datetime | None:
+    return _rated_at({"rated_at": row.get("named_at")})
+
+
+def name_row(issue_id: str, name: str | None, by: str = "operator", when: datetime | None = None) -> dict:
+    return {"issue_id": issue_id, "name": clean_name(name) or "", "by": by,
+            "named_at": (when or datetime.now(timezone.utc)).isoformat()}
+
+
+def apply_name_row(issue: IssueRecord, row: dict) -> bool:
+    """Apply one name row in place unless the issue already holds a newer one."""
+    when = _named_at(row)
+    if when is None or (issue.named_at is not None and _utc(issue.named_at) > when):
+        return False
+    issue.name, issue.named_at = clean_name(row.get("name")), when
+    return True
+
+
+def _latest_names(rows: list[dict]) -> dict[str, dict]:
+    latest: dict[str, dict] = {}
+    for row in rows:
+        when, id = _named_at(row), row.get("issue_id")
+        if when is None or not id:
+            continue
+        if id not in latest or _named_at(latest[id]) <= when:
+            latest[id] = row
+    return latest
+
+
+def _load_names() -> list[dict]:
+    rows = _read_rating_log(NAMES_FILE)
+    try:
+        rows += importlib.import_module("app.vast.db").load_names()
+    except Exception as exc:
+        log.warning("VastDB names unavailable (%s); using the local name log", config.redact(exc))
+    return rows
+
+
+def apply_names(rows: list[dict], persist: bool = True) -> int:
+    """Apply name rows to the live store; persist them to the log, VastDB and the snapshot. Returns how many applied."""
+    applied = 0
+    with _lock:
+        for row in rows:
+            for table in (_issues, _saved_issues):
+                issue = table.get(row.get("issue_id"))
+                if issue is not None and apply_name_row(issue, row) and table is _issues:
+                    applied += 1
+        if persist and rows:
+            try:
+                append_rating_log(rows, NAMES_FILE)
+            except Exception as exc:
+                log.warning("Name log write failed (%s)", config.redact(exc))
+            _snapshot()
+            _enqueue("insert_names", [dict(r) for r in rows])
     return applied
 
 
@@ -281,6 +412,14 @@ def load() -> None:
         rated = sum(apply_rating_row(issue, ratings[issue.id]) for issue in issues if issue.id in ratings)
         if ratings:
             log.info("Severity ratings: %d rows, %d applied", len(ratings), rated)
+        pins = _latest_pins(_load_pins())
+        pinned = sum(apply_pin_row(issue, pins[issue.id]) for issue in issues if issue.id in pins)
+        if pins:
+            log.info("Pins: %d rows, %d applied", len(pins), pinned)
+        names = _latest_names(_load_names())
+        named = sum(apply_name_row(issue, names[issue.id]) for issue in issues if issue.id in names)
+        if names:
+            log.info("Names: %d rows, %d applied", len(names), named)
         _videos.clear()
         _issues.clear()
         _done_videos.clear()
@@ -396,9 +535,15 @@ def canonical_issues(include_uploads_before_reset: bool = False, include_rejecte
             original = sightings[0].model_copy(deep=True, update={"sightings": len(sightings)})
             kept = [s for s in sightings if s.verdict != "rejected"]
             best = max(kept or sightings, key=lambda s: s.severity)    # max keeps the first on ties: the canonical
+            if sightings[0].severity_model == "operator":              # an operator's grade beats every model's
+                best = sightings[0]
             original.severity = best.severity
             if best is not sightings[0]:
                 original.severity_reason, original.severity_model = best.severity_reason, best.severity_model
+            original.pinned = any(s.pinned for s in sightings)    # a pin on any sighting pins the issue
+            named = [s for s in sightings if s.named_at is not None]   # the newest name among the sightings
+            if named:
+                original.name = max(named, key=lambda s: _utc(s.named_at)).name
             if not kept:
                 original.verdict = "rejected"
             elif any(s.verdict == "confirmed" for s in kept):

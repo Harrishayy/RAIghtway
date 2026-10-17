@@ -1,11 +1,13 @@
 // In-memory backend with the same contract as the real one, including a live upload that walks the
 // pipeline stages in real time. The UI cannot tell it apart from the API, which is the point: every
 // screen is built and demoed against it, and switching to the API is configuration.
-import type { Issue, ReportPayload, StageId, TopicHit, Video } from '../types';
-import { CATEGORY, STAGES } from '../registry';
+import type { Facility, Issue, LatLon, Recommendation, Zone, ReportIssue, ReportPayload, StageId, TopicHit, Video, WorkOrder } from '../types';
+import { CATEGORY, CREW_FOR, STAGES } from '../registry';
 import type { Capabilities, RaightwayClient } from '../client/types';
 import { buildWorld, scriptedClip, type MockWorld } from './fixtures';
 import { buildReport, planRoutes } from './planner';
+import { MOCK_SITES, planRounds, recommendRules } from './rounds';
+import wardsDoc from './wards.json';
 
 export interface MockClientOptions {
   /** Simulated network latency in ms. */
@@ -21,10 +23,36 @@ const PIECE_MS = (T.box - T.find) / 6;
 
 interface Upload { started: number; clip: ReturnType<typeof scriptedClip> }
 
+/** Where the car was at video time t: the GPS samples when the video has them, else along its track. */
+function locate(video: Video, t: number): LatLon | null {
+  const gps = video.gps ?? [];
+  if (gps.length) {
+    const next = gps.findIndex(p => p.t >= t);
+    if (next <= 0) return [gps[Math.max(0, next)]!.lat, gps[Math.max(0, next)]!.lon];
+    const a = gps[next - 1]!, b = gps[next]!; const f = b.t > a.t ? (t - a.t) / (b.t - a.t) : 0;
+    return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f];
+  }
+  const track = video.track; if (!track.length) return null;
+  const k = Math.min(track.length - 1, Math.max(0, Math.round((t / Math.max(1, video.duration_s)) * (track.length - 1))));
+  return track[k]!;
+}
+
 export function createMockClient(opts: MockClientOptions = {}): RaightwayClient {
   const latency = opts.latencyMs ?? 140; const speed = opts.speed ?? 1;
   const world: MockWorld = buildWorld();
   const uploads: Upload[] = [];
+  // Operator input: pins and severity overrides layered on any issue, like the backend's overlay rows.
+  const pins = new Map<string, boolean>();
+  const names = new Map<string, string | null>();
+  const cleanName = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80).trim() || null;
+  const grades = new Map<string, { severity: Issue['severity']; was: Pick<Issue, 'severity' | 'severity_model' | 'severity_reason' | 'verdict'> }>();
+  let manualSeq = 0;
+  const overlay = (i: Issue): Issue => {
+    const g = grades.get(i.id);
+    const pinned = pins.get(i.id) ?? i.pinned ?? false;
+    const name = names.has(i.id) ? names.get(i.id) ?? null : i.name ?? null;
+    return g ? { ...i, pinned, name, severity: g.severity, severity_model: 'operator', severity_reason: 'Set by an operator.', verdict: 'confirmed', find_severity: i.find_severity ?? g.was.severity } : { ...i, pinned, name };
+  };
   let report: ReportPayload | null = null; let reportUntil = 0;
   const wait = <T,>(v: T, signal?: AbortSignal): Promise<T> => new Promise((res, rej) => {
     const t = setTimeout(() => res(structuredClone(v)), latency * (0.6 + Math.random() * 0.8));
@@ -60,17 +88,34 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
   function canonical(): Issue[] {
     const extra = new Map<string, number>(); const live: Issue[] = [];
     for (const u of uploads) { const s = snapshot(u); s.issues.forEach(i => { if (i.duplicate_of) extra.set(i.duplicate_of, (extra.get(i.duplicate_of) ?? 0) + 1); else live.push(i); }); }
-    return [...world.issues.map(i => (extra.has(i.id) ? { ...i, sightings: i.sightings + extra.get(i.id)!, sighting_refs: [...(i.sighting_refs ?? []), ...uploads.map(u => ({ video_id: u.clip.video.id, drive: u.clip.video.drive, t: 0 }))] } : i)), ...live.filter(i => !i.duplicate_of)];
+    return [...world.issues.map(i => (extra.has(i.id) ? { ...i, sightings: i.sightings + extra.get(i.id)!, sighting_refs: [...(i.sighting_refs ?? []), ...uploads.map(u => ({ video_id: u.clip.video.id, drive: u.clip.video.drive, t: 0 }))] } : i)), ...live.filter(i => !i.duplicate_of)].map(overlay);
   }
 
   const depot = { lat: 43.6502, lon: -79.3627, label: 'Assumed depot, Front St E at Parliament St' };
-  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, frames: false, directions: false, ...opts.capabilities };
+  const caps: Capabilities = { upload: true, run: true, dispatch: true, regenerateReport: true, similar: true, topicSearch: true, frames: false, directions: false, markIssues: true, sites: true, recommend: true, zones: true, ...opts.capabilities };
+  let sites: Facility[] = structuredClone(MOCK_SITES);
+  // the City's 25 wards (the backend's bundled file), plus areas drawn in this session
+  const wards: Zone[] = wardsDoc.zones.map(z => ({ id: z.id, label: z.label, kind: 'ward' as const, code: z.code, polygons: z.polygons as LatLon[][], source: wardsDoc.source, source_url: wardsDoc.source_url }));
+  let drawn: Zone[] = [];
+  const focusOf = (ids?: string[], polygon?: LatLon[]): Zone[] => [...[...wards, ...drawn].filter(z => ids?.includes(z.id)), ...(polygon && polygon.length >= 3 ? [{ id: 'drawn', label: 'Drawn area', kind: 'custom' as const, polygons: [polygon], source: 'Drawn in the console' }] : [])];
+  let recommendation: Recommendation | null = null; let recommendStarted = 0;
+  const inToronto = (f: { lat: number; lon: number }) => f.lat >= 43.55 && f.lat <= 43.88 && f.lon >= -79.7 && f.lon <= -79.08;
+  const checkSite = (f: Facility) => {
+    if (!f.label.trim()) throw new Error('The site needs a name');
+    if (!f.crews.length) throw new Error('Pick at least one crew type for the site');
+    if (!inToronto(f)) throw new Error('The site is outside the City of Toronto');
+    f.vehicles = Object.fromEntries(Object.entries(f.vehicles ?? {}).filter(([c, n]) => f.crews.includes(c as never) && n != null).map(([c, n]) => [c, Math.max(0, Math.min(20, n!))]));
+    return f;
+  };
   return {
     id: 'mock', label: 'Sample data', capabilities: caps,
     listVideos: signal => wait(allVideos(), signal),
     getVideo(id, signal) {
       const u = uploads.find(x => x.clip.video.id === id);
-      if (u) { const s = snapshot(u); return wait({ video: s.video, issues: s.issues }, signal); }
+      if (u) {
+        const s = snapshot(u); const marked = world.issues.filter(i => i.video_id === id && i.source === 'manual');
+        return wait({ video: { ...s.video, issue_ids: [...s.video.issue_ids, ...marked.map(i => i.id)] }, issues: [...s.issues, ...marked].map(overlay) }, signal);
+      }
       const video = world.videos.find(v => v.id === id); if (!video) return Promise.reject(new Error(`No video ${id}`));
       const byId = new Map(canonical().map(i => [i.id, i]));
       return wait({ video, issues: video.issue_ids.map(i => byId.get(i)).filter((i): i is Issue => Boolean(i)) }, signal);
@@ -83,10 +128,56 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
     },
     getReport(signal) {
       if (!report) report = { report: buildReport(canonical()), updating: false };
-      return wait({ ...report, updating: Date.now() < reportUntil }, signal);
+      // Names are an operator overlay that can change after the report was written: show the current ones.
+      const named = (r: ReportIssue): ReportIssue => (names.has(r.id) ? { ...r, name: names.get(r.id) ?? null } : r);
+      const current = report.report && { ...report.report, priorities: report.report.priorities?.map(named), sections: report.report.sections?.map(s => ({ ...s, top: s.top?.map(named) })) };
+      return wait({ ...report, report: current, updating: Date.now() < reportUntil }, signal);
     },
     async regenerateReport() { reportUntil = Date.now() + 2500; await new Promise(r => setTimeout(r, 2500)); report = { report: buildReport(canonical()), updating: false }; return structuredClone(report); },
-    async dispatch(crews) { await new Promise(r => setTimeout(r, 900 + latency)); return planRoutes(canonical(), crews, depot); },
+    async dispatch(crews, o = {}) {
+      await new Promise(r => setTimeout(r, 900 + latency));
+      // Legacy crew counts keep the old planner; anything per site plans round trips from the sites.
+      if (!o.sites && !o.days && !o.min_severity && !o.scenario && !o.zones && !o.polygon && Object.keys(crews).length) return planRoutes(canonical(), crews, depot);
+      const pick = o.scenario && recommendation?.id === o.scenario.recommendation_id ? recommendation.scenarios.find(x => x.id === o.scenario!.scenario_id) : undefined;
+      const focus = focusOf(pick?.zones?.length ? pick.zones : o.zones, o.polygon);
+      const plan = planRounds(canonical(), sites, pick ? { sites: pick.sites, days: o.days, min_severity: pick.min_severity, focus } : { ...o, focus });
+      return { ...plan, recommendation, scenario_id: pick?.id ?? null };
+    },
+    listFacilities: signal => wait(sites, signal),
+    listZones: signal => wait([...wards, ...drawn], signal),
+    async addZone(label, polygon) {
+      if (polygon.length < 3) throw new Error('A zone needs at least three points');
+      const z: Zone = { id: `zone-${Date.now().toString(36)}`, label: label.trim() || 'Drawn area', kind: 'custom', polygons: [polygon], source: 'Drawn in the console', custom: true };
+      drawn = [...drawn, z]; return wait(z);
+    },
+    async updateZone(id, patch) {
+      const cur = drawn.find(z => z.id === id); if (!cur) throw new Error('No such drawn zone (wards are read-only)');
+      const z: Zone = { ...cur, label: patch.label?.trim() || cur.label, polygons: patch.polygon ? [patch.polygon] : cur.polygons };
+      drawn = drawn.map(x => (x.id === id ? z : x)); return wait(z);
+    },
+    async removeZone(id) { if (!drawn.some(z => z.id === id)) throw new Error('No such drawn zone (wards are read-only)'); drawn = drawn.filter(z => z.id !== id); await wait(null); },
+    async addFacility(input) {
+      await new Promise(r => setTimeout(r, latency));
+      const id = `site-${(input.label ?? 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32)}-${Date.now().toString(36).slice(-4)}`;
+      const f = checkSite({ id, label: input.label ?? '', kind: input.kind ?? 'yard', crews: input.crews ?? [], lat: Number(input.lat), lon: Number(input.lon), address: input.address ?? null, source: input.source ?? 'Added in the console', source_url: input.source_url ?? null, note: input.note ?? null, custom: true, assumed: false, vehicles: input.vehicles ?? {} });
+      sites = [...sites, f]; return structuredClone(f);
+    },
+    async updateFacility(id, patch) {
+      await new Promise(r => setTimeout(r, latency));
+      const cur = sites.find(f => f.id === id); if (!cur) throw new Error('No such site');
+      const f = checkSite({ ...structuredClone(cur), ...structuredClone(patch) } as Facility);
+      sites = sites.map(x => (x.id === id ? f : x)); return structuredClone(f);
+    },
+    async removeFacility(id) { await new Promise(r => setTimeout(r, latency)); if (!sites.some(f => f.id === id)) throw new Error('No such site'); sites = sites.filter(f => f.id !== id); },
+    async resetFacilities() { sites = structuredClone(MOCK_SITES); return wait(sites); },
+    async geocode() { return null; },
+    async recommend(o) {
+      recommendStarted = Date.now();
+      try { await new Promise(r => setTimeout(r, 1600 + latency)); recommendation = recommendRules(canonical(), sites, { ...o, focus: focusOf(o.zones, o.polygon) }); return structuredClone(recommendation); }
+      finally { recommendStarted = 0; }
+    },
+    latestRecommendation: signal => wait(recommendation, signal),
+    recommendProgress: signal => wait(recommendStarted ? { running: true, stage: Date.now() - recommendStarted < 800 ? 'Rules proposing scenarios' : 'Fallback router solving scenarios', elapsed_s: Math.round((Date.now() - recommendStarted) / 100) / 10 } : { running: false }, signal),
     hazards: signal => wait([], signal),
     directions: () => Promise.reject(new Error('Directions need the live backend')),
     async upload(file, o = {}) {
@@ -110,6 +201,36 @@ export function createMockClient(opts: MockClientOptions = {}): RaightwayClient 
         }
       }
       return wait(hits.sort((a, b) => b.score - a.score).slice(0, 200), signal);
+    },
+    async createIssue(input) {
+      await new Promise(r => setTimeout(r, 700 + latency));        // the backend grabs a frame and asks Nemotron
+      const video = world.videos.find(v => v.id === input.video_id) ?? uploads.map(u => u.clip.video).find(v => v.id === input.video_id);
+      if (!video) throw new Error(`No video ${input.video_id}`);
+      const id = `m-mock${String(++manualSeq).padStart(4, '0')}`;
+      const where = locate(video, input.t);
+      const order: WorkOrder = { repair: `Inspect and repair the reported ${CATEGORY[input.category].label.toLowerCase()} issue.`, crew: CREW_FOR[input.category], minutes: 45, equipment: ['safety cones'], urgency: input.severity >= 5 ? 'urgent' : input.severity >= 3 ? 'soon' : 'routine' };
+      const issue: Issue = {
+        id, video_id: video.id, t: Math.round(input.t * 100) / 100, category: input.category, severity: input.severity, confidence: 1,
+        description: input.description.trim() || `Operator-reported ${CATEGORY[input.category].label.toLowerCase()} issue`, frame_url: '',
+        bbox: input.bbox ?? null, lat: where?.[0] ?? null, lon: where?.[1] ?? null, duplicate_of: null, sightings: 1, work_order: order,
+        source: 'manual', pinned: input.pinned, severity_model: 'operator', severity_reason: 'Graded by the operator who marked it on the footage.',
+        verdict: 'confirmed', frame_seed: video.id.length * 7 + manualSeq, place: undefined,
+      };
+      world.issues.push(issue);
+      if (!video.issue_ids.includes(id)) video.issue_ids.push(id);
+      if (input.pinned) pins.set(id, true);
+      if (cleanName(input.name)) names.set(id, cleanName(input.name));
+      return structuredClone(overlay(issue));
+    },
+    async updateIssue(id, patch) {
+      await new Promise(r => setTimeout(r, latency));
+      const all = [...canonical(), ...uploads.flatMap(u => snapshot(u).issues)];
+      const me = all.find(i => i.id === id); if (!me) throw new Error(`No issue ${id}`);
+      if (patch.pinned !== undefined) pins.set(id, patch.pinned);
+      if (patch.name !== undefined) names.set(id, cleanName(patch.name));
+      if (patch.severity) grades.set(id, { severity: patch.severity, was: grades.get(id)?.was ?? { severity: me.severity, severity_model: me.severity_model, severity_reason: me.severity_reason, verdict: me.verdict } });
+      else if (patch.revert_severity) grades.delete(id);
+      return structuredClone(overlay(world.issues.find(i => i.id === id) ?? me));
     },
     frameUrl: () => null,
     videoUrl: () => null,

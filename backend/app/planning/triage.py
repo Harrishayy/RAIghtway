@@ -7,7 +7,8 @@ stay in code and the model only chooses within them (clamp()):
 
 - below the severity floor: deferred, always;
 - no trucks of that crew type at any site: deferred;
-- severity 5 goes today whenever the crew type has any capacity;
+- severity 5, and any job an operator pinned (whatever the floor), goes today whenever the crew type
+  has any capacity; pinned jobs say "Pinned by operator";
 - severity 4 is never deferred while the horizon has room for it;
 - today's minutes per crew type stay within that day's capacity (overflow moves to later);
 - a low-severity job may join today only within BUNDLE_KM of another job going today (same crew).
@@ -47,7 +48,7 @@ each crew type's work capacity per day in minutes, and how many days this plan c
 Each listed job carries rule_suggestion: "today" (day 1), "later" (a later day of this plan) or "defer" (not in
 this plan). Return decisions only for jobs where you change the suggestion or can give a sharper reason
 (at most 25); every other job keeps its suggestion.
-Fixed rules you must follow: severity 5 is always today; severity 4 is never deferred while there is room;
+Fixed rules you must follow: severity 5 and jobs pinned by the operator are always today; severity 4 is never deferred while there is room;
 keep today's minutes for a crew type within its capacity per day; a severity 1-2 job may go today only when
 it is next to another job going today (bundle it, and say so). Prefer jobs seen several times, and jobs
 whose severity reason describes a risk to people. Defer routine work that does not fit.
@@ -78,8 +79,16 @@ def capacity(trucks: dict[str, int]) -> dict[str, int]:
     return {crew: int(n * (SHIFT_MIN - LUNCH_MIN) * WORK_SHARE) for crew, n in trucks.items() if n > 0}
 
 
+def pinned(i: IssueRecord) -> bool:
+    return bool(getattr(i, "pinned", False))
+
+
+def _must(i: IssueRecord) -> bool:
+    return i.severity == 5 or pinned(i)
+
+
 def _rank(i: IssueRecord) -> tuple:
-    return (-i.severity, -i.sightings, -i.confidence, i.id)
+    return (not pinned(i), -i.severity, -i.sightings, -i.confidence, i.id)
 
 
 def _near_today(i: IssueRecord, today: list[IssueRecord]) -> IssueRecord | None:
@@ -97,15 +106,21 @@ def rules(jobs: list[IssueRecord], min_severity: int, cap: dict[str, int], days:
 
     def put(i: IssueRecord, decision: Decision, reason: str) -> None:
         out[i.id] = TriageDecision(issue_id=i.id, crew=CREW_FOR[i.category], severity=i.severity,
-                                   decision=decision, reason=reason, by="rule")
+                                   decision=decision, reason=reason, by="rule", pinned=pinned(i))
 
     for i in sorted(jobs, key=_rank):
         crew, m = CREW_FOR[i.category], minutes(i)
         day_cap = cap.get(crew, 0)
-        if i.severity < min_severity:
+        if day_cap <= 0:
+            put(i, "defer", f"No {CREW_NAME[crew].lower()} trucks at any site"
+                + (" (pinned, but nobody can do it)" if pinned(i) else ""))
+        elif pinned(i):
+            today_used[crew] += m
+            total_used[crew] += m
+            today.append(i)
+            put(i, "today", "Pinned by operator: must-do today")
+        elif i.severity < min_severity:
             put(i, "defer", f"Below the S{min_severity}+ floor chosen for this plan")
-        elif day_cap <= 0:
-            put(i, "defer", f"No {CREW_NAME[crew].lower()} trucks at any site")
         elif i.severity == 5:
             today_used[crew] += m
             total_used[crew] += m
@@ -126,7 +141,7 @@ def rules(jobs: list[IssueRecord], min_severity: int, cap: dict[str, int], days:
     # Routine jobs next to today's work ride along when there is a little room.
     for i in sorted(jobs, key=_rank):
         d = out[i.id]
-        if d.decision == "today" or i.severity > 2 or i.severity < min_severity:
+        if d.decision == "today" or i.severity > 2 or i.severity < min_severity or cap.get(CREW_FOR[i.category], 0) <= 0:
             continue
         crew = CREW_FOR[i.category]
         anchor = _near_today(i, today)
@@ -149,8 +164,8 @@ def clamp(proposed: dict[str, tuple[Decision, str]], jobs: list[IssueRecord], ba
         crew = CREW_FOR[i.category]
         reason = " ".join(reason.split())[:160] or "Model decision"
         fixed = baseline[issue_id]
-        # Hard rules: the floor, no trucks, and severity 5 are not the model's call.
-        if i.severity < min_severity or cap.get(crew, 0) <= 0 or i.severity == 5:
+        # Hard rules: the floor, no trucks, pinned jobs and severity 5 are not the model's call.
+        if (i.severity < min_severity and not pinned(i)) or cap.get(crew, 0) <= 0 or _must(i):
             clamped += decision != fixed.decision
             continue
         if i.severity == 4 and decision == "defer":
@@ -159,7 +174,7 @@ def clamp(proposed: dict[str, tuple[Decision, str]], jobs: list[IssueRecord], ba
         else:
             by = "model"
         out[issue_id] = TriageDecision(issue_id=i.id, crew=crew, severity=i.severity, decision=decision,
-                                       reason=reason, by=by)
+                                       reason=reason, by=by, pinned=pinned(i))
     # Today's minutes stay within each crew type's day: overflow (lowest priority first) moves to later.
     today = sorted((by_id[d.issue_id] for d in out.values() if d.decision == "today"), key=_rank)
     used: dict[str, int] = defaultdict(int)
@@ -167,7 +182,7 @@ def clamp(proposed: dict[str, tuple[Decision, str]], jobs: list[IssueRecord], ba
     for i in today:
         crew = CREW_FOR[i.category]
         limit = cap.get(crew, 0) * TODAY_SLACK
-        if i.severity == 5 or used[crew] + minutes(i) <= limit:
+        if _must(i) or used[crew] + minutes(i) <= limit:
             used[crew] += minutes(i)
             kept.append(i)
             continue
@@ -187,8 +202,8 @@ def clamp(proposed: dict[str, tuple[Decision, str]], jobs: list[IssueRecord], ba
 
 def _facts(jobs: list[IssueRecord], baseline: dict[str, TriageDecision], min_severity: int,
            cap: dict[str, int], trucks: dict[str, int], days: int) -> dict:
-    eligible = sorted((i for i in jobs if i.severity >= min_severity and cap.get(CREW_FOR[i.category], 0) > 0),
-                      key=_rank)
+    eligible = sorted((i for i in jobs if (i.severity >= min_severity or pinned(i))
+                       and cap.get(CREW_FOR[i.category], 0) > 0), key=_rank)
     counts: dict[str, Counter] = defaultdict(Counter)
     work: dict[str, int] = defaultdict(int)
     for i in jobs:
@@ -201,7 +216,7 @@ def _facts(jobs: list[IssueRecord], baseline: dict[str, TriageDecision], min_sev
                          "open_by_severity": dict(counts[crew]), "minutes_at_or_above_floor": work[crew]}
                   for crew in sorted(set(counts) | set(trucks))},
         "jobs": [{"id": i.id, "crew": CREW_FOR[i.category], "category": i.category, "severity": i.severity,
-                  "minutes": minutes(i), "sightings": i.sightings, "description": i.description[:140],
+                  "minutes": minutes(i), "sightings": i.sightings, "pinned_by_operator": pinned(i), "description": ((getattr(i, "name", None) or "").strip() or i.description)[:140],
                   "severity_reason": (i.severity_reason or "")[:160] or None,
                   "lat": round(i.lat, 4), "lon": round(i.lon, 4),
                   "rule_suggestion": baseline[i.id].decision} for i in eligible[:MODEL_JOBS]],
@@ -212,13 +227,15 @@ def _facts(jobs: list[IssueRecord], baseline: dict[str, TriageDecision], min_sev
 async def triage_with_model(facts: dict) -> dict:
     """One Nemotron call; returns the raw reply as a dict (the Weave trace shows the facts and the reply)."""
     from app.ai import nemotron
+    # Ultra answers this size of prompt in ~10-20 s; reasoning tokens count against max_tokens.
     reply = await nemotron.chat_json([{"role": "system", "content": PROMPT},
                                       {"role": "user", "content": json.dumps(facts)}],
-                                     _TriageReply, model=nemotron.LIGHTNING, timeout=TIMEOUT_S, max_tokens=4096)
+                                     _TriageReply, model=nemotron.ULTRA, timeout=TIMEOUT_S, max_tokens=12000)
     return reply.model_dump()
 
 
-MODELS = {"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B": ("nemotron-lightning", "Nemotron 3.5 Lightning")}
+MODELS = {"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": ("nemotron-ultra", "Nemotron 3 Ultra"),
+          "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B": ("nemotron-lightning", "Nemotron 3.5 Lightning")}
 
 
 def _template(decisions: dict[str, TriageDecision], min_severity: int, days: int) -> tuple[str, dict[str, str]]:
@@ -252,7 +269,7 @@ async def decide(jobs: list[IssueRecord], min_severity: int, trucks: dict[str, i
             proposed = {p.issue_id: (p.decision, p.reason) for p in reply.decisions}
             decisions, clamped = clamp(proposed, jobs, baseline, min_severity, cap, days)
             from app.ai import nemotron
-            model, model_name = MODELS.get(nemotron.LIGHTNING, ("nemotron", nemotron.LIGHTNING))
+            model, model_name = MODELS.get(nemotron.ULTRA, ("nemotron", nemotron.ULTRA))
             rationale = " ".join(reply.rationale.split())[:600]
             by_crew = {c: " ".join(t.split())[:240] for c, t in reply.by_crew.items() if c in CREW_NAME and t.strip()}
             log.info("Triage: %s answered %d decisions in %.1f s, %d clamped", model, len(proposed),

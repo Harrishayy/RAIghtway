@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CATEGORY_PRESETS, type CategoryPresetId } from '@raightway/core';
+import { CATEGORY_PRESETS, isOpen, type CategoryPresetId } from '@raightway/core';
 import { dashFor } from '@/domain/derive';
 import { useIssues, useVideos } from '@/domain/queries';
 import { useCategories, useUi } from '@/state/ui';
@@ -12,12 +12,14 @@ import { Seg } from '@/ui/Seg';
 const TABS: Array<{ href: string; label: string; icon: IconName }> = [
   { href: '/review', label: 'Review', icon: 'film' }, { href: '/issues', label: 'Issues', icon: 'pin' },
   { href: '/report', label: 'Report', icon: 'report' }, { href: '/dispatch', label: 'Dispatch', icon: 'route' },
+  { href: '/sites', label: 'Sites', icon: 'site' },
 ];
 
 export function TopNav() {
   const path = usePathname(); const videos = useVideos(); const issues = useIssues(); const cats = useCategories();
   const { preset, setPreset } = useUi();
-  const open = (issues.data ?? []).filter(i => !i.duplicate_of && cats.includes(i.category)).length;
+  // open work only: canonical and not rejected as a false positive (same as Issues and Dispatch)
+  const open = (issues.data ?? []).filter(i => isOpen(i) && cats.includes(i.category)).length;
   return (
     <nav className="nav" aria-label="Console">
       <Link href="/review" className="nav-brand"><Dash state={dashFor(videos.data)} size={22} />Raightway</Link>

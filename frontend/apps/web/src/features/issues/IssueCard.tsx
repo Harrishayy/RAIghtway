@@ -2,14 +2,16 @@
 // The selected issue: what and where, how often it has been seen (each sighting seeks to it), the
 // work order, and similar past issues. Handles merged, provisional and not-yet-planned states.
 // `frame` adds the finding's frame with its box, for screens that have no player beside the card.
-import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, raterDef, severityDef, type Issue, type Similar, type Urgency } from '@raightway/core';
+import { CATEGORY, CATEGORY_FOR_CREW, fmtClock, fmtCoord, fmtTimecode, issueLabel, raterDef, severityDef, type Issue, type Similar, type Urgency } from '@raightway/core';
 import { useClient } from '@/domain/client';
-import { useSimilar } from '@/domain/queries';
+import { useSimilar, useUpdateIssue } from '@/domain/queries';
+import { Icon } from '@/ui/Icon';
 import { usePlayback } from '@/state/playback';
 import { Chip, CategoryLabel, SevDot, SevLabel } from '@/ui/marks';
 import { Empty } from '@/ui/State';
 import { Frame } from '@/ui/Footage/Frame';
 import { Thumb } from '@/ui/Thumb';
+import { PhotoButton, photoOf } from '@/ui/Lightbox';
 
 const URGENCY: Record<Urgency, ['failed' | 'hold' | 'neutral', string]> = { urgent: ['failed', 'Urgent'], soon: ['hold', 'Soon'], routine: ['neutral', 'Routine'] };
 
@@ -27,18 +29,27 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
   const jump = (vid: string, t: number) => (vid === videoId ? seek(t) : open(vid, t, issue.id));
   return (
     <div className="issue">
-      {frame ? <Frame issue={issue} src={client.frameUrl(issue)} seed={issue.frame_seed ?? 0} className="issue-frame" /> : null}
+      {frame ? (
+        <div className="photo-wrap">
+          <Frame issue={issue} src={client.frameUrl(issue)} seed={issue.frame_seed ?? 0} className="issue-frame" />
+          {!issue.provisional ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="photo-cover" /> : null}
+        </div>
+      ) : null}
       <div className="issue-tags">
         <CategoryLabel id={issue.category} /><SevLabel level={issue.severity} />
         <Chip tone={issue.severity === 5 ? 'failed' : 'neutral'}>{sv.when}</Chip>
         {issue.provisional ? <Chip tone="live">Checking</Chip> : issue.duplicate_of ? <Chip tone="info">Merged</Chip> : null}
         {issue.verdict === 'rejected' ? <Chip tone="neutral">Not a defect</Chip> : null}
+        {issue.source === 'manual' ? <span title="Marked by an operator on the footage, not found by a model"><Chip tone="neutral">Manual</Chip></span> : null}
+        {issue.pinned ? <span title="Pinned: triage treats it as must-do in the next plan"><Chip tone="info">Pinned</Chip></span> : null}
       </div>
-      <div><h4>{issue.description}</h4><p className="where">{issue.place ?? (issue.lat != null && issue.lon != null ? fmtCoord(issue.lat, issue.lon) : 'No location')}</p></div>
+      <PinToggle issue={issue} />
+      <div><h4>{issueLabel(issue)}</h4>{issue.name?.trim() ? <p className="issue-desc">{issue.description}</p> : null}<p className="where">{issue.place ?? (issue.lat != null && issue.lon != null ? fmtCoord(issue.lat, issue.lon) : 'No location')}</p></div>
+      {!frame && !issue.provisional && client.frameUrl(issue) ? <PhotoButton src={client.frameUrl(issue)} photo={photoOf(issue)} className="btn btn-ghost btn-sm issue-photo"><Icon name="zoom" />Full-size photo</PhotoButton> : null}
       <Grade issue={issue} />
       <dl className="kv">
         <dt>Seen</dt><dd>{issue.sightings}× · first in {issue.video_id} @ {fmtTimecode(issue.t)}</dd>
-        <dt>Confidence</dt><dd>{Math.round(issue.confidence * 100)}%</dd>
+        {issue.source === 'manual' ? <><dt>Source</dt><dd>Operator-reported on footage</dd></> : <><dt>Confidence</dt><dd>{Math.round(issue.confidence * 100)}%</dd></>}
         {issue.lat != null && issue.lon != null ? <><dt>GPS</dt><dd>{fmtCoord(issue.lat, issue.lon)}</dd></> : null}
       </dl>
       {issue.duplicate_of ? <p className="note">A re-sighting of <button type="button" className="link" onClick={() => select(issue.duplicate_of)}>{issue.duplicate_of}</button>; its work order lives there.</p> : null}
@@ -52,7 +63,7 @@ export function IssueCard({ issue, onOpen, frame }: { issue: Issue | null | unde
       ) : !issue.duplicate_of ? <p className="note">{issue.provisional ? 'Work order follows once history is checked.' : 'No work order yet.'}</p> : null}
       {client.capabilities.similar && similar.data?.length ? (
         <div><div className="label">Similar issues{index ? <span className="muted" title={INDEX[index][1]}> · {INDEX[index][0]}</span> : null}</div>
-          <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{s.issue.description}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button></li>)}</ul>
+          <ul className="similar">{similar.data.slice(0, 5).map(s => <li key={s.issue.id}><button type="button" title="Watch in Review" onClick={() => (onOpen ? onOpen(s.issue) : open(s.issue.video_id, Math.max(0, s.issue.t - 0.4), s.issue.id))}><Thumb src={client.frameUrl(s.issue)} category={s.issue.category} /><span className="two"><span>{issueLabel(s.issue)}</span><span className="muted small">{s.issue.place ?? s.issue.video_id}{s.issue.sightings > 1 ? ` · seen ${s.issue.sightings}×` : ''}</span></span><span className="sim-r"><SevDot level={s.issue.severity} />{s.distance != null ? <span className="mono muted small" title="Embedding distance">{s.distance.toFixed(2)}</span> : null}</span></button><PhotoButton src={client.frameUrl(s.issue)} photo={photoOf(s.issue)} className="thumb-cover" /></li>)}</ul>
         </div>
       ) : null}
     </div>
@@ -72,9 +83,24 @@ function Grade({ issue }: { issue: Issue }) {
       {issue.severity_reason ? <p>{issue.severity_reason}</p> : null}
       <span className="muted">
         {rater ? <>Graded by {rater.name}{rater.fallback ? ' (fallback)' : ''}</> : 'Graded'}
-        {changed ? ` · find pass said S${issue.find_severity}` : ''}
+        {changed ? (issue.source === 'manual' ? ` · marked as S${issue.find_severity}` : ` · find pass said S${issue.find_severity}`) : ''}
         {rejected ? ' · kept on record, left out of the report and routes' : ''}
       </span>
+    </div>
+  );
+}
+
+/** Include this issue in the next plan (a pin), or take it out. Re-sightings pin the issue they belong to. */
+function PinToggle({ issue }: { issue: Issue }) {
+  const client = useClient(); const update = useUpdateIssue();
+  if (!client.capabilities.markIssues || issue.provisional || issue.verdict === 'rejected') return null;
+  const id = issue.duplicate_of ?? issue.id; const pinned = Boolean(issue.pinned);
+  return (
+    <div className="pin-row">
+      <button type="button" className={`btn btn-sm pin-toggle ${pinned ? 'btn-primary' : 'btn-secondary'}`} aria-pressed={pinned} disabled={update.isPending}
+        onClick={() => update.mutate({ id, patch: { pinned: !pinned } })} title={pinned ? 'Take it out of the next plan' : 'Triage treats a pinned issue as must-do today'}>
+        <Icon name="pin" />{update.isPending ? 'Saving…' : pinned ? 'In next plan' : 'Include in plan'}
+      </button>
     </div>
   );
 }

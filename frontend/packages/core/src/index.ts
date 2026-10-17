@@ -6,4 +6,5 @@ export * as schema from './schema';
 export { parse } from './schema';
 export * from './client';
 export * from './geo/projection';
+export * from './geo/zones';
 export { torontoBasemap, TORONTO_ROTATION, type Basemap } from './geo/toronto';

@@ -33,6 +33,10 @@ _COLUMNS = {
     "frames": ["issue_id", "jpeg"],
     # Severity ratings: insert-only overlay on issues; the newest row per issue_id wins (store.apply_rating_row).
     "ratings": "issue_id severity find_severity reason model verdict observed rated_at".split(),
+    # Pins ("include in the next plan"): insert-only overlay too; the newest row per issue_id wins (store.apply_pin_row).
+    "pins": "issue_id pinned by pinned_at".split(),
+    # Operator names for issues: insert-only overlay; newest row per issue_id wins, "" clears (store.apply_name_row).
+    "names": "issue_id name by named_at".split(),
 }
 
 
@@ -55,6 +59,8 @@ def _schemas():
         "plans": [ts, s, s, s, s, i],
         "frames": [s, pa.binary()],
         "ratings": [s, i, i, s, s, s, s, ts],
+        "pins": [s, i, s, ts],
+        "names": [s, s, s, ts],
     }
     schemas = {name: pa.schema(list(zip(_COLUMNS[name], fields)))
                for name, fields in types.items()}
@@ -209,6 +215,32 @@ def load_ratings() -> list[dict]:
     rows = _read_rows("ratings", _COLUMNS["ratings"])
     for row in rows:
         row["rated_at"] = _utc(row["rated_at"]).isoformat()
+    return rows
+
+
+def insert_pins(rows: list[dict]) -> None:
+    _insert_rows("pins", [{"issue_id": str(row["issue_id"]), "pinned": int(bool(row.get("pinned"))),
+                           "by": row.get("by") or "", "pinned_at": _stored_time(row["pinned_at"])} for row in rows])
+
+
+def load_pins() -> list[dict]:
+    rows = _read_rows("pins", _COLUMNS["pins"])
+    for row in rows:
+        row["pinned"] = bool(row["pinned"])
+        row["pinned_at"] = _utc(row["pinned_at"]).isoformat()
+    return rows
+
+
+def insert_names(rows: list[dict]) -> None:
+    _insert_rows("names", [{"issue_id": str(row["issue_id"]), "name": row.get("name") or "",
+                            "by": row.get("by") or "", "named_at": _stored_time(row["named_at"])} for row in rows])
+
+
+def load_names() -> list[dict]:
+    rows = _read_rows("names", _COLUMNS["names"])
+    for row in rows:
+        row["name"] = row.get("name") or ""
+        row["named_at"] = _utc(row["named_at"]).isoformat()
     return rows
 
 

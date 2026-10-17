@@ -5,13 +5,14 @@
 // every group at once. Each group sorts demo picks first, then severity, then confidence. The map and the card
 // follow the selection.
 import { useMemo, useState } from 'react';
-import { CATEGORY, CATEGORIES, SEVERITY, severityDef, type CategoryId, type Issue, type Severity } from '@raightway/core';
+import { CATEGORY, CATEGORIES, SEVERITY, issueLabel, severityDef, type CategoryId, type Issue, type Severity } from '@raightway/core';
 import { useIssues } from '@/domain/queries';
 import { pickRank } from '@/domain/derive';
 import { usePlayback } from '@/state/playback';
 import { useCategories } from '@/state/ui';
 import { MapView } from '@/features/map/MapView';
 import { CategoryLabel, Chip, SevDot } from '@/ui/marks';
+import { Icon } from '@/ui/Icon';
 import { Seg } from '@/ui/Seg';
 import { Empty, Failed, Loading } from '@/ui/State';
 import { IssueCard } from './IssueCard';
@@ -36,6 +37,7 @@ export function IssuesView() {
   const issues = useIssues(); const cats = useCategories(); const router = useRouter();
   const { selectedIssue, select, open } = usePlayback();
   const [sort, setSort] = useState<Sort>('severity'); const [q, setQ] = useState(''); const [show, setShow] = useState<Show>('confirmed');
+  const [pinnedOnly, setPinnedOnly] = useState(false);   // only issues pinned into the next plan
   // Categories shown on this page: follows the top-bar preset until the chips here are used.
   const [picked, setPicked] = useState<Set<CategoryId> | null>(null);
   const shownCats = useMemo(() => (picked ? CATEGORIES.map(c => c.id).filter(id => picked.has(id)) : cats), [picked, cats]);
@@ -46,11 +48,12 @@ export function IssuesView() {
   // Canonical issues that pass the verdict filter and the search, before category and severity filters.
   const { pool, verdicts } = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const found = (issues.data ?? []).filter(i => !i.duplicate_of
-      && (!needle || `${i.description} ${i.severity_reason ?? ''} ${i.place ?? ''} ${i.id}`.toLowerCase().includes(needle)));
+    const found = (issues.data ?? []).filter(i => !i.duplicate_of && (!pinnedOnly || i.pinned)
+      && (!needle || `${i.name ?? ''} ${i.description} ${i.severity_reason ?? ''} ${i.place ?? ''} ${i.id}`.toLowerCase().includes(needle)));
     const verdicts = { confirmed: found.filter(i => i.verdict !== 'rejected').length, rejected: found.filter(i => i.verdict === 'rejected').length, all: found.length };
     return { pool: found.filter(i => show === 'all' || (show === 'rejected') === (i.verdict === 'rejected')), verdicts };
-  }, [issues.data, q, show]);
+  }, [issues.data, q, show, pinnedOnly]);
+  const pinnedN = useMemo(() => (issues.data ?? []).filter(i => !i.duplicate_of && i.pinned).length, [issues.data]);
   const perCat = useMemo(() => { const m = new Map<CategoryId, number>(); pool.forEach(i => m.set(i.category, (m.get(i.category) ?? 0) + 1)); return m; }, [pool]);
 
   const groups = useMemo<Group[]>(() => CATEGORIES.filter(c => shownCats.includes(c.id)).map(c => {
@@ -88,7 +91,10 @@ export function IssuesView() {
     <div className="split">
       <section className="card split-main" aria-label="Issues">
         <div className="toolbar issues-bar">
-          <label className="search search-in"><span className="sr">Search issues</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search description, reason, street, id" /></label>
+          <label className="search search-in"><span className="sr">Search issues</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, description, reason, street, id" /></label>
+          <button type="button" className="cat-chip pin-filter" aria-pressed={pinnedOnly} onClick={() => setPinnedOnly(p => !p)} title="Show only issues pinned into the next plan">
+            <Icon name="pin" /><span>Pinned</span><span className="num">{pinnedN}</span>
+          </button>
           <Seg label="Verdict from the severity rating" size="sm" value={show} onChange={setShow} options={[{ value: 'confirmed', label: `Confirmed ${verdicts.confirmed}` }, { value: 'rejected', label: `Rejected ${verdicts.rejected}` }, { value: 'all', label: `All ${verdicts.all}` }]} />
           <div className="cat-chips" role="group" aria-label="Issue types shown">
             {CATEGORIES.map(c => (
@@ -103,7 +109,7 @@ export function IssuesView() {
           <span className="label num shown-n" aria-live="polite">{total} of {pool.length} shown</span>
         </div>
         <div className="scroll">
-          {issues.isPending ? <Loading rows={8} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : !groups.length ? <Empty title="No issues match">{show === 'rejected' && !verdicts.rejected ? 'Nothing was judged a false positive.' : 'Loosen the filters or pick more issue types.'}</Empty> : (
+          {issues.isPending ? <Loading rows={8} /> : issues.isError ? <Failed error={issues.error} onRetry={() => void issues.refetch()} /> : !groups.length ? <Empty title="No issues match">{pinnedOnly && !pinnedN ? 'Nothing is pinned yet. Use "Include in plan" on an issue, or mark one on footage in Review.' : show === 'rejected' && !verdicts.rejected ? 'Nothing was judged a false positive.' : 'Loosen the filters or pick more issue types.'}</Empty> : (
             <table className="moments issues-tbl grouped">
               <thead><tr><th>Sev</th><th className="d">Finding and why it got that grade</th><th className="seen-c">Seen</th><th className="seen-c">Conf.</th></tr></thead>
               {groups.map(g => {
@@ -131,11 +137,11 @@ export function IssuesView() {
                     ) : g.shown.map(i => (
                       <tr key={i.id} aria-selected={i.id === sel?.id} tabIndex={0} onClick={() => select(i.id)} onKeyDown={e => { if (e.key === 'Enter') select(i.id); }} className={[i.provisional ? 'prov' : '', i.verdict === 'rejected' ? 'rejected' : ''].join(' ').trim() || undefined}>
                         <td><SevDot level={i.severity} /></td>
-                        <td className="d" title={[i.description, i.severity_reason, i.place].filter(Boolean).join(' · ')}>
-                          <span className="two"><b>{i.featured ? <span className="pick" title="Demo pick">#{i.featured}</span> : null}{i.description}</b>
-                            <span className="muted">{i.verdict === 'rejected' ? <Chip tone="neutral" plain>Not a defect</Chip> : null}{i.severity_reason ?? i.place ?? i.id}</span></span>
+                        <td className="d" title={[i.name, i.description, i.severity_reason, i.place].filter(Boolean).join(' · ')}>
+                          <span className="two"><b>{i.featured ? <span className="pick" title="Demo pick">#{i.featured}</span> : null}{issueLabel(i)}</b>
+                            <span className="muted">{i.source === 'manual' ? <Chip tone="neutral" plain>Manual</Chip> : null}{i.pinned ? <Chip tone="info" plain>Pinned</Chip> : null}{i.verdict === 'rejected' ? <Chip tone="neutral" plain>Not a defect</Chip> : null}{i.severity_reason ?? i.place ?? i.id}</span></span>
                         </td>
-                        <td className="num seen-c">{i.sightings}×</td><td className="num seen-c">{Math.round(i.confidence * 100)}%</td>
+                        <td className="num seen-c">{i.sightings}×</td><td className="num seen-c" title={i.source === 'manual' ? 'Operator-reported: no model confidence' : undefined}>{i.source === 'manual' ? '—' : `${Math.round(i.confidence * 100)}%`}</td>
                       </tr>
                     ))}
                   </tbody>

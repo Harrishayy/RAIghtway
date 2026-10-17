@@ -1,7 +1,7 @@
 'use client';
-import { fmtTimecode, type Issue } from '@raightway/core';
+import { fmtTimecode, issueLabel, type Issue } from '@raightway/core';
 import { usePlayback } from '@/state/playback';
-import { CategoryLabel, SevDot } from '@/ui/marks';
+import { CategoryLabel, Chip, SevDot } from '@/ui/marks';
 
 /** Every finding in this drive by time. Click or Enter to jump to it. */
 export function Detections({ issues }: { issues: Issue[] }) {
@@ -15,7 +15,7 @@ export function Detections({ issues }: { issues: Issue[] }) {
         {issues.map(i => (
           <tr key={i.id} aria-selected={i.id === selectedIssue} tabIndex={0} onClick={() => go(i)} onKeyDown={e => { if (e.key === 'Enter') go(i); }} className={i.duplicate_of ? 'merged' : i.provisional ? 'prov' : undefined}>
             <td className="t">{fmtTimecode(i.t)}</td><td><CategoryLabel id={i.category} compact /></td><td><SevDot level={i.severity} /></td>
-            <td className="d" title={i.description}>{i.duplicate_of ? 'Re-sighting: ' : ''}{i.description}</td><td className="num seen-c">{i.sightings}×</td>
+            <td className="d" title={`${i.source === 'manual' ? 'Operator-reported: ' : ''}${i.name?.trim() ? `${i.name.trim()} · ` : ''}${i.description}${i.pinned ? ' (pinned for the next plan)' : ''}`}>{i.source === 'manual' ? <Chip tone="neutral" plain>Manual</Chip> : null}{i.pinned ? <Chip tone="info" plain>Pinned</Chip> : null}{i.duplicate_of ? 'Re-sighting: ' : ''}{issueLabel(i)}</td><td className="num seen-c">{i.sightings}×</td>
           </tr>
         ))}
       </tbody>

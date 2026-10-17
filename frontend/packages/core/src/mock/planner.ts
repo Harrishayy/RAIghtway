@@ -46,7 +46,7 @@ function reportDetail(issues: Issue[], crews: CrewCounts): Pick<Report, 'stats' 
   const canonical = issues.filter(i => !i.duplicate_of && !i.provisional);
   const open = canonical.filter(i => i.verdict !== 'rejected'); const rejected = canonical.filter(i => i.verdict === 'rejected');
   const mins = (i: Issue) => i.work_order?.minutes ?? 30;
-  const item = (i: Issue): ReportIssue => ({ id: i.id, category: i.category, severity: i.severity, severity_reason: i.severity_reason ?? null, description: i.description, video_id: i.video_id, drive: i.sighting_refs?.[0]?.drive ?? null, t: i.t, lat: i.lat, lon: i.lon, place: street(i) || null, sightings: i.sightings, confidence: i.confidence, deadline: DEADLINE[i.severity] ?? 'routine', crew: CREW_FOR[i.category], repair: i.work_order?.repair ?? null, minutes: mins(i) });
+  const item = (i: Issue): ReportIssue => ({ id: i.id, category: i.category, severity: i.severity, severity_reason: i.severity_reason ?? null, description: i.description, name: i.name ?? null, video_id: i.video_id, drive: i.sighting_refs?.[0]?.drive ?? null, t: i.t, lat: i.lat, lon: i.lon, place: street(i) || null, sightings: i.sightings, confidence: i.confidence, deadline: DEADLINE[i.severity] ?? 'routine', crew: CREW_FOR[i.category], repair: i.work_order?.repair ?? null, minutes: mins(i) });
   const sections: ReportSection[] = CATEGORIES.flatMap(c => {
     const list = open.filter(i => i.category === c.id).sort(rank); const dropped = rejected.filter(i => i.category === c.id).length;
     if (!list.length && !dropped) return [];
