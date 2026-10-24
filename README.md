@@ -14,8 +14,6 @@ and routes the right crew to it, with every job linked to the frame that shows i
 [![W&B Weave](https://img.shields.io/badge/W%26B-Inference%20·%20Weave-FFBE00.svg?logo=weightsandbiases&logoColor=black)](#sponsor-stack)
 [![CoreWeave](https://img.shields.io/badge/CoreWeave-GPUs-2741E7.svg)](#sponsor-stack)
 
-Built at the **VAST Builders Challenge**, London, 17 Oct 2026 · Track: *Real-time video agents*
-
 </div>
 
 ---
